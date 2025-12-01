@@ -1,0 +1,20 @@
+{
+  "include_extensions": [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".txt",
+    ".md"
+  ],
+  "exclude_extensions": [
+    ".exe",
+    ".dll",
+    ".so",
+    ".test",
+    ".jpg",
+    ".png",
+    ".gif",
+    ".sum"
+  ]
+}
