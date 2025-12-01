@@ -1,4 +1,3 @@
-
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -158,9 +157,10 @@ interface TopBarProps {
   isPlaying: boolean;
   handleSplit: () => void;
   handlePlayPause: () => void;
+  onOpenUploadModal: () => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause }) => {
+const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, onOpenUploadModal }) => {
   return (
     <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
       {/* Left: Branding / Status */}
@@ -199,6 +199,12 @@ const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, han
 
       {/* Right: Actions (Placeholder) */}
       <div className="flex items-center gap-3">
+        <Button
+          onClick={onOpenUploadModal}
+          className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20"
+        >
+          + Asset
+        </Button>
         <Button className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400">
           Export
         </Button>
@@ -207,6 +213,124 @@ const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, han
   );
 }
 
+// --- NEW: Add Asset Modal Component ---
+interface AddAssetModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  projectId: string;
+  onAssetAdded: (assets: LibraryAsset[]) => void;
+}
+
+const AddAssetModal: React.FC<AddAssetModalProps> = ({
+  isOpen,
+  onClose,
+  projectId,
+  onAssetAdded
+}) => {
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file || !projectId) return;
+
+    setLoading(true);
+    try {
+      const updatedAssets = await addAsset(projectId, file);
+      onAssetAdded(updatedAssets);
+      onClose();
+    } catch (e) {
+      console.error(e);
+      alert('Failed to upload and process asset');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    // Check if relatedTarget is an Element (which is a Node) before calling contains()
+    if (e.relatedTarget instanceof Element && !(e.currentTarget.contains(e.relatedTarget))) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files?.[0]) setFile(e.dataTransfer.files[0]);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden ring-1 ring-white/10">
+        {/* Fixed Header */}
+        <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900 shrink-0">
+          <div>
+            <h2 className="text-xl font-black text-white tracking-tight">Add Project Asset</h2>
+            <p className="text-slate-400 text-xs">Upload a video file to the library</p>
+          </div>
+          <button onClick={onClose} disabled={loading} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-800 text-slate-500 hover:text-white transition-colors" title="Close">✕</button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+          <form id="add-asset-form" onSubmit={handleSubmit} className="flex flex-col gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">File Selection</label>
+              <div
+                onClick={() => !loading && fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`
+                                    relative border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 min-h-[140px]
+                                    ${isDragging ? 'border-blue-500 bg-blue-500/10 scale-[0.99]' : file ? 'border-green-500/50 bg-green-500/5' : 'border-slate-700 bg-slate-950 hover:border-slate-500 hover:bg-slate-900'}
+                                    ${loading ? 'opacity-50 pointer-events-none' : ''}
+                                `}
+              >
+                <input ref={fileInputRef} type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} className="hidden" disabled={loading} />
+                {file ? (
+                  <div className="animate-in fade-in zoom-in duration-200">
+                    <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center mb-2 mx-auto text-slate-900 text-lg shadow-lg shadow-green-500/20">✓</div>
+                    <p className="font-bold text-white text-sm truncate max-w-[200px] mx-auto">{file.name}</p>
+                    <p className="text-slate-400 text-xs mt-0.5">{(file.size / (1024 * 1024)).toFixed(1)} MB</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center mb-2 text-slate-400 text-xl">☁️</div>
+                    <p className="font-bold text-slate-300 text-sm">Drag & Drop Video Here</p>
+                    <p className="text-slate-500 text-xs mt-1">or click to select a file (MP4, MOV supported)</p>
+                  </>
+                )}
+              </div>
+            </div>
+          </form>
+        </div>
+
+        {/* Fixed Footer */}
+        <div className="p-5 border-t border-slate-800 bg-slate-900/50 backdrop-blur-sm flex items-center justify-end gap-4 shrink-0">
+          <button type="button" onClick={onClose} disabled={loading} className="px-4 py-2 text-slate-400 font-bold hover:text-white transition-colors text-xs">Cancel</button>
+          <Button type="submit" form="add-asset-form" disabled={!file || loading} isLoading={loading} className="flex-1 max-w-[200px]">
+            {loading ? 'Processing...' : 'Add to Library'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 function EditorApp() {
   const { projectId } = Route.useSearch();
   const { screenToFlowPosition } = useReactFlow();
@@ -214,6 +338,7 @@ function EditorApp() {
   const [project, setProject] = useState<Project | null>(null);
   const [libraryAssets, setLibraryAssets] = useState<LibraryAsset[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false); // NEW STATE
 
   const [nodes, setNodes, onNodesChange] = useNodesState<ClipNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -241,7 +366,6 @@ function EditorApp() {
     if (!confirm(`Are you sure you want to remove the asset "${assetName}" from the project library? This will not remove it from existing nodes.`)) return;
 
     // TODO: Implement actual backend call to delete asset from project source folder
-    // await deleteProjectAsset(projectId, assetName); 
 
     setLibraryAssets(prev => prev.filter(asset => asset.name !== assetName));
     alert(`Asset "${assetName}" removed from library (Backend removal pending).`);
@@ -250,8 +374,12 @@ function EditorApp() {
 
   // --- UPLOAD LOGIC ---
   const handleUploadClick = () => {
-    fileInputRef.current?.click();
+    setIsUploadModalOpen(true); // NEW: Open Modal instead of triggering file input directly
   };
+
+  const handleAssetAdded = (updatedAssets: LibraryAsset[]) => {
+    setLibraryAssets(updatedAssets);
+  }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -477,26 +605,27 @@ function EditorApp() {
   // --- NEW: Keydown Listener for Deletion ---
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Delete' || event.key === 'Backspace') {
-        if (selectedNodeId && !isPlaying) {
-          event.preventDefault();
+      if (selectedNodeId && !isPlaying) {
+        event.preventDefault();
 
-          // 1. Remove node
-          setNodes(nds => nds.filter(n => n.id !== selectedNodeId));
+        // Use the string type explicitly to avoid any ambiguity when filtering
+        const nodeIdToDelete: string = selectedNodeId;
 
-          // 2. Remove connected edges
-          setEdges(eds => eds.filter(e => e.source !== selectedNodeId && e.target !== selectedNodeId));
+        // 1. Remove node
+        setNodes(nds => nds.filter(n => n.id !== nodeIdToDelete));
 
-          // 3. Deselect
-          setSelectedNodeId(null);
+        // 2. Remove connected edges
+        setEdges(eds => eds.filter(e => e.source !== nodeIdToDelete && e.target !== nodeIdToDelete));
 
-          // 4. Reset active playing node if it was the one deleted
-          if (activeNodeId === selectedNodeId) {
-            setActiveNodeId(null);
-            if (videoRef.current) {
-              videoRef.current.pause();
-              videoRef.current.removeAttribute('src');
-            }
+        // 3. Deselect
+        setSelectedNodeId(null);
+
+        // 4. Reset active playing node if it was the one deleted
+        if (activeNodeId === nodeIdToDelete) { // Changed check to use nodeIdToDelete
+          setActiveNodeId(null);
+          if (videoRef.current) {
+            videoRef.current.pause();
+            videoRef.current.removeAttribute('src');
           }
         }
       }
@@ -510,126 +639,130 @@ function EditorApp() {
   if (!projectId || !project) return <div className="flex items-center justify-center h-screen bg-[#050505] text-white">Loading Project...</div>;
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
+    <>
+      <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
 
-      {/* Top Bar (Controls) */}
-      <TopBar
-        activeNode={getActiveNodeData()}
-        currentTime={currentTime}
-        isPlaying={isPlaying}
-        handleSplit={handleSplit}
-        handlePlayPause={handlePlayPause}
-      />
+        {/* Top Bar (Controls) */}
+        <TopBar
+          activeNode={getActiveNodeData()}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          handleSplit={handleSplit}
+          handlePlayPause={handlePlayPause}
+          onOpenUploadModal={() => setIsUploadModalOpen(true)} // PASS NEW HANDLER
+        />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Panel: Library */}
-        <aside className="w-[280px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0">
-          <div className="h-10 border-b border-white/5 flex items-center justify-between px-4 bg-[#0a0a0a]">
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Library</h2>
-            <button
-              onClick={handleUploadClick}
-              disabled={isUploading}
-              className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded transition-colors disabled:opacity-50"
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left Panel: Library */}
+          <aside className="w-[280px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0">
+            <div className="h-10 border-b border-white/5 flex items-center justify-between px-4 bg-[#0a0a0a]">
+              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Library</h2>
+              <Button // MODIFIED: Button now opens the modal
+                onClick={handleUploadClick}
+                disabled={isUploading}
+                className="text-[10px] bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded transition-colors disabled:opacity-50 h-7"
+              >
+                {isUploading ? 'Uploading...' : '+ Upload'}
+              </Button>
+              {/* Removed hidden file input as modal handles it */}
+            </div>
+
+            <div className="p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+              {isUploading && (
+                <div className="bg-[#151515] rounded-lg p-4 border border-white/5 animate-pulse">
+                  <div className="h-20 bg-slate-800 rounded mb-2"></div>
+                  <div className="h-3 w-2/3 bg-slate-800 rounded"></div>
+                  <div className="text-[10px] text-yellow-500 mt-2 text-center">Processing Video...</div>
+                </div>
+              )}
+              {libraryAssets.map(asset => (
+                <div
+                  key={asset.name}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, asset)}
+                  className="group relative bg-[#151515] rounded-lg overflow-hidden border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-lg hover:shadow-black/50"
+                >
+                  <div className="aspect-video relative bg-black">
+                    {asset.thumbnailUrl ? (
+                      <img
+                        src={`http://localhost:3001${asset.thumbnailUrl}`}
+                        className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-300"
+                        alt={asset.name}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-700">
+                        <span className="text-[10px]">No Preview</span>
+                      </div>
+                    )}
+                    <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-mono text-white/80">
+                      {asset.duration ? formatTime(asset.duration) : 'VIDEO'}
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <div className="flex justify-between items-start">
+                      <div className="text-xs font-medium text-slate-200 group-hover:text-yellow-500 transition-colors line-clamp-1 max-w-[180px]">{asset.name}</div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleRemoveAsset(asset.name); }}
+                        className="p-1 -mr-1 -mt-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors scale-90 group-hover:scale-100 opacity-0 group-hover:opacity-100"
+                        title={`Remove ${asset.name} from library`}
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </aside>
+
+          {/* Center: Graph */}
+          <div className="flex-1 relative h-full bg-[#050505]" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              nodeTypes={nodeTypes}
+              fitView
+              minZoom={0.1}
+              className="bg-[#050505]"
             >
-              {isUploading ? 'Uploading...' : '+ Upload'}
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="hidden"
-              accept="video/*"
-              onChange={handleFileChange}
-            />
+              <Background color="#1a1a1a" gap={24} size={1} />
+              <Panel position="bottom-center" className="bg-[#1a1a1a] px-4 py-2 rounded-full border border-white/10 shadow-xl mb-4">
+                <span className="text-xs text-slate-400 font-medium">Sequence Graph</span>
+              </Panel>
+            </ReactFlow>
           </div>
 
-          <div className="p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
-            {isUploading && (
-              <div className="bg-[#151515] rounded-lg p-4 border border-white/5 animate-pulse">
-                <div className="h-20 bg-slate-800 rounded mb-2"></div>
-                <div className="h-3 w-2/3 bg-slate-800 rounded"></div>
-                <div className="text-[10px] text-yellow-500 mt-2 text-center">Processing Video...</div>
+          {/* Right Panel: Player (Large) */}
+          <div className="w-[500px] bg-[#000] border-l border-white/5 flex flex-col z-20 shadow-2xl relative">
+            <video
+              ref={videoRef}
+              className="w-full h-full object-contain"
+              onTimeUpdate={() => {
+                if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+              }}
+              onClick={(e) => { e.stopPropagation(); handlePlayPause(); }}
+            />
+            {!activeNodeId && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <div className="text-6xl mb-4 opacity-20">🎞️</div>
+                <p className="text-slate-600 font-medium">No clip selected</p>
               </div>
             )}
-            {libraryAssets.map(asset => (
-              <div
-                key={asset.name}
-                draggable
-                onDragStart={(e) => onDragStart(e, asset)}
-                className="group relative bg-[#151515] rounded-lg overflow-hidden border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-lg hover:shadow-black/50"
-              >
-                <div className="aspect-video relative bg-black">
-                  {asset.thumbnailUrl ? (
-                    <img
-                      src={`http://localhost:3001${asset.thumbnailUrl}`}
-                      className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-300"
-                      alt={asset.name}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-700">
-                      <span className="text-[10px]">No Preview</span>
-                    </div>
-                  )}
-                  <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-mono text-white/80">
-                    {asset.duration ? formatTime(asset.duration) : 'VIDEO'}
-                  </div>
-                </div>
-                <div className="p-3">
-                  <div className="flex justify-between items-start">
-                    <div className="text-xs font-medium text-slate-200 group-hover:text-yellow-500 transition-colors line-clamp-1 max-w-[180px]">{asset.name}</div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleRemoveAsset(asset.name); }}
-                      className="p-1 -mr-1 -mt-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors scale-90 group-hover:scale-100 opacity-0 group-hover:opacity-100"
-                      title={`Remove ${asset.name} from library`}
-                    >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
-        </aside>
-
-        {/* Center: Graph */}
-        <div className="flex-1 relative h-full bg-[#050505]" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
-            nodeTypes={nodeTypes}
-            fitView
-            minZoom={0.1}
-            className="bg-[#050505]"
-          >
-            <Background color="#1a1a1a" gap={24} size={1} />
-            <Panel position="bottom-center" className="bg-[#1a1a1a] px-4 py-2 rounded-full border border-white/10 shadow-xl mb-4">
-              <span className="text-xs text-slate-400 font-medium">Sequence Graph</span>
-            </Panel>
-          </ReactFlow>
-        </div>
-
-        {/* Right Panel: Player (Large) */}
-        <div className="w-[500px] bg-[#000] border-l border-white/5 flex flex-col z-20 shadow-2xl relative">
-          <video
-            ref={videoRef}
-            className="w-full h-full object-contain"
-            onTimeUpdate={() => {
-              if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
-            }}
-            onClick={(e) => { e.stopPropagation(); handlePlayPause(); }}
-          />
-          {!activeNodeId && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <div className="text-6xl mb-4 opacity-20">🎞️</div>
-              <p className="text-slate-600 font-medium">No clip selected</p>
-            </div>
-          )}
         </div>
       </div>
 
-    </div>
+      {/* NEW: Render the Modal */}
+      <AddAssetModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        projectId={projectId}
+        onAssetAdded={handleAssetAdded}
+      />
+    </>
   );
 }
