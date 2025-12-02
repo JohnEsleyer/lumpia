@@ -164,13 +164,24 @@ interface TopBarProps {
   handlePlayPause: () => void;
   handlePlaySequence: () => void;
   onOpenUploadModal: () => void;
+  isLibraryVisible: boolean;
+  toggleLibrary: () => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal }) => {
+const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal, isLibraryVisible, toggleLibrary }) => {
   return (
     <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
       {/* Left: Branding / Status */}
       <div className="flex items-center gap-4">
+        <Button
+          onClick={toggleLibrary}
+          className={`p-2 rounded-md transition-colors ${isLibraryVisible ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
+          title={isLibraryVisible ? "Hide Library" : "Show Library"}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </Button>
         <div className="text-sm font-bold text-slate-200 tracking-wider uppercase">Editor</div>
         <div className="h-4 w-px bg-white/10" />
         <div className="text-xs text-slate-500">
@@ -427,6 +438,7 @@ function EditorApp() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false); // NEW STATE
   const [isLoadingProject, setIsLoadingProject] = useState(true); // NEW: Loading state
   const [loadingStatus, setLoadingStatus] = useState("Initializing..."); // NEW: Loading text
+  const [isLibraryVisible, setIsLibraryVisible] = useState(true); // NEW: Library visibility
 
   const [nodes, setNodes, onNodesChange] = useNodesState<ClipNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -853,70 +865,74 @@ function EditorApp() {
           handlePlayPause={handlePlayPause}
           handlePlaySequence={handlePlaySequence}
           onOpenUploadModal={() => setIsUploadModalOpen(true)} // PASS NEW HANDLER
+          isLibraryVisible={isLibraryVisible}
+          toggleLibrary={() => setIsLibraryVisible(prev => !prev)}
         />
 
         <div className="flex flex-1 overflow-hidden">
           {/* Left Panel: Library */}
-          <aside className="w-[280px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0">
-            <div className="h-10 border-b border-white/5 flex items-center justify-between px-4 bg-[#0a0a0a]">
-              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Library</h2>
-              <Button // MODIFIED: Button now opens the modal
-                onClick={handleUploadClick}
-                disabled={isUploading}
-                className="text-[10px] bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded transition-colors disabled:opacity-50 h-7"
-              >
-                {isUploading ? 'Uploading...' : '+ Upload'}
-              </Button>
-              {/* Removed hidden file input as modal handles it */}
-            </div>
-
-            <div className="p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
-              {isUploading && (
-                <div className="bg-[#151515] rounded-lg p-4 border border-white/5 animate-pulse">
-                  <div className="h-20 bg-slate-800 rounded mb-2"></div>
-                  <div className="h-3 w-2/3 bg-slate-800 rounded"></div>
-                  <div className="text-[10px] text-yellow-500 mt-2 text-center">Processing Video...</div>
-                </div>
-              )}
-              {libraryAssets.map(asset => (
-                <div
-                  key={asset.name}
-                  draggable
-                  onDragStart={(e) => onDragStart(e, asset)}
-                  className="group relative bg-[#151515] rounded-lg overflow-hidden border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-lg hover:shadow-black/50"
+          {isLibraryVisible && (
+            <aside className="w-[280px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0">
+              <div className="h-10 border-b border-white/5 flex items-center justify-between px-4 bg-[#0a0a0a]">
+                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Library</h2>
+                <Button // MODIFIED: Button now opens the modal
+                  onClick={handleUploadClick}
+                  disabled={isUploading}
+                  className="text-[10px] bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded transition-colors disabled:opacity-50 h-7"
                 >
-                  <div className="aspect-video relative bg-black">
-                    {asset.thumbnailUrl ? (
-                      <img
-                        src={`http://localhost:3001${asset.thumbnailUrl}`}
-                        className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-300"
-                        alt={asset.name}
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-700">
-                        <span className="text-[10px]">No Preview</span>
+                  {isUploading ? 'Uploading...' : '+ Upload'}
+                </Button>
+                {/* Removed hidden file input as modal handles it */}
+              </div>
+
+              <div className="p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+                {isUploading && (
+                  <div className="bg-[#151515] rounded-lg p-4 border border-white/5 animate-pulse">
+                    <div className="h-20 bg-slate-800 rounded mb-2"></div>
+                    <div className="h-3 w-2/3 bg-slate-800 rounded"></div>
+                    <div className="text-[10px] text-yellow-500 mt-2 text-center">Processing Video...</div>
+                  </div>
+                )}
+                {libraryAssets.map(asset => (
+                  <div
+                    key={asset.name}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, asset)}
+                    className="group relative bg-[#151515] rounded-lg overflow-hidden border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-lg hover:shadow-black/50"
+                  >
+                    <div className="aspect-video relative bg-black">
+                      {asset.thumbnailUrl ? (
+                        <img
+                          src={`http://localhost:3001${asset.thumbnailUrl}`}
+                          className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-300"
+                          alt={asset.name}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-700">
+                          <span className="text-[10px]">No Preview</span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-mono text-white/80">
+                        {asset.duration ? formatTime(asset.duration) : 'VIDEO'}
                       </div>
-                    )}
-                    <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-mono text-white/80">
-                      {asset.duration ? formatTime(asset.duration) : 'VIDEO'}
+                    </div>
+                    <div className="p-3">
+                      <div className="flex justify-between items-start">
+                        <div className="text-xs font-medium text-slate-200 group-hover:text-yellow-500 transition-colors line-clamp-1 max-w-[180px]">{asset.name}</div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRemoveAsset(asset.name); }}
+                          className="p-1 -mr-1 -mt-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors scale-90 group-hover:scale-100 opacity-0 group-hover:opacity-100"
+                          title={`Remove ${asset.name} from library`}
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="p-3">
-                    <div className="flex justify-between items-start">
-                      <div className="text-xs font-medium text-slate-200 group-hover:text-yellow-500 transition-colors line-clamp-1 max-w-[180px]">{asset.name}</div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleRemoveAsset(asset.name); }}
-                        className="p-1 -mr-1 -mt-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors scale-90 group-hover:scale-100 opacity-0 group-hover:opacity-100"
-                        title={`Remove ${asset.name} from library`}
-                      >
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </aside>
+                ))}
+              </div>
+            </aside>
+          )}
 
           {/* Center: Graph */}
           <div className="flex-1 relative h-full bg-[#050505]" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
