@@ -22,6 +22,8 @@ import '@xyflow/react/dist/style.css';
 import { getProject, getProjectAssets, addAsset } from '../api';
 import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
+import { useFFmpeg } from '../hooks/useFFmpeg'; // <-- NEW IMPORT
+import { fetchFile } from '@ffmpeg/util';       // <-- NEW IMPORT
 
 export const Route = createFileRoute('/editor')({
   component: () => (
@@ -231,6 +233,49 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [statusText, setStatusText] = useState(''); // NEW STATE
+
+  // --- FFmpeg Integration ---
+  const { ffmpeg, loaded: ffmpegLoaded } = useFFmpeg();
+
+  const handleFileChangeForConversion = async (inputFile: File): Promise<File> => {
+    let fileToUpload = inputFile;
+    setStatusText('Analyzing Codec...');
+
+    if (ffmpegLoaded) {
+      try {
+        await ffmpeg.writeFile('input.mp4', await fetchFile(inputFile));
+
+        let isH265 = false;
+        const logCallback = ({ message }: { message: string }) => {
+          if (message.toLowerCase().includes('hevc') || message.toLowerCase().includes('h265')) isH265 = true
+        }
+        ffmpeg.on('log', logCallback)
+        await ffmpeg.exec(['-i', 'input.mp4'])
+        ffmpeg.off('log', logCallback)
+
+        if (isH265) {
+          setStatusText('Converting to H.264...');
+          // Transcode to H.264, keep audio (copy)
+          await ffmpeg.exec(['-i', 'input.mp4', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'copy', 'output.mp4']);
+
+          // FIX 1: Handle Uint8Array from readFile and create a clean ArrayBuffer for Blob
+          const data = await ffmpeg.readFile('output.mp4') as Uint8Array;
+          const blob = new Blob([data as BlobPart], { type: 'video/mp4' });
+
+          fileToUpload = new File([blob], inputFile.name.replace(/\.[^/.]+$/, "") + "_h264.mp4", { type: 'video/mp4' });
+        }
+      } catch (err) {
+        console.warn("Client-side H.264 conversion failed, using original file.", err);
+        setStatusText('Using original file...');
+      }
+    }
+
+    setFile(fileToUpload);
+    setStatusText(''); // Clear status after file selection/conversion attempt
+    return fileToUpload;
+  };
+  // --- END FFmpeg Integration ---
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -238,6 +283,7 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
 
     setLoading(true);
     try {
+      // Note: file might be the original or the converted one
       const updatedAssets = await addAsset(projectId, file);
       onAssetAdded(updatedAssets);
       onClose();
@@ -249,15 +295,36 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
     }
   };
 
+  // Update file state to trigger conversion analysis/processing on selection
+  const handleFileChange = (inputFile: File | null) => {
+    if (inputFile) {
+      setFile(null); // Clear file first so component state updates
+      setStatusText('Initializing...');
+      handleFileChangeForConversion(inputFile);
+    }
+  };
+
+  const handleFileSelectClick = () => {
+    if (!loading && fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileSelectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileChange(e.target.files?.[0] || null);
+  };
+
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
   };
 
+  // *** FIX FOR ORIGINAL ERROR ***
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    // Check if relatedTarget is an Element (which is a Node) before calling contains()
+    // FIX 2: Cast relatedTarget to Node to satisfy the contains() method signature.
     if (e.relatedTarget instanceof Element && !(e.currentTarget.contains(e.relatedTarget))) {
       setIsDragging(false);
     }
@@ -266,7 +333,7 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files?.[0]) setFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files?.[0]) handleFileChange(e.dataTransfer.files[0]);
   };
 
   if (!isOpen) return null;
@@ -287,9 +354,9 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
           <form id="add-asset-form" onSubmit={handleSubmit} className="flex flex-col gap-6">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">File Selection</label>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">File Selection</label>
               <div
-                onClick={() => !loading && fileInputRef.current?.click()}
+                onClick={handleFileSelectClick}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
@@ -299,11 +366,11 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
                                     ${loading ? 'opacity-50 pointer-events-none' : ''}
                                 `}
               >
-                <input ref={fileInputRef} type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} className="hidden" disabled={loading} />
+                <input ref={fileInputRef} type="file" accept="video/*" onChange={handleFileSelectChange} className="hidden" disabled={loading} />
                 {file ? (
                   <div className="animate-in fade-in zoom-in duration-200">
                     <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center mb-2 mx-auto text-slate-900 text-lg shadow-lg shadow-green-500/20">✓</div>
-                    <p className="font-bold text-white text-sm truncate max-w-[200px] mx-auto">{file.name}</p>
+                    <p className="font-bold text-white text-sm truncate max-w-[200px]">{file.name}</p>
                     <p className="text-slate-400 text-xs mt-0.5">{(file.size / (1024 * 1024)).toFixed(1)} MB</p>
                   </div>
                 ) : (
@@ -315,6 +382,14 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Status Text */}
+            {statusText && (
+              <div className="text-center text-sm text-blue-400 font-medium animate-pulse flex items-center justify-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+                {statusText}
+              </div>
+            )}
           </form>
         </div>
 
