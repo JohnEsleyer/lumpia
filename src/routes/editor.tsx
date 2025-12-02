@@ -83,60 +83,63 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
   }, [data.filmstrip, data.thumbnailUrl]);
 
   return (
-    <div
-      className={`
-        relative group flex flex-col w-[300px] bg-[#1a1a1a] rounded-xl overflow-hidden transition-all duration-300
-        ${selected ? 'ring-2 ring-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-[1.02]' : 'ring-1 ring-white/10 shadow-xl hover:ring-white/30'}
-        ${data.isPlaying ? 'ring-2 ring-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : ''}
-      `}
-    >
+    <div className="relative group w-[300px]">
       {/* Input Handle - Left Side */}
       <Handle
         type="target"
         position={Position.Left}
-        className="!bg-yellow-500 !w-4 !h-8 !rounded-r-md !rounded-l-none !border-none !-left-2 top-1/2 transition-transform hover:scale-125"
+        className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-left-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50"
       />
 
-      {/* Header */}
-      <div className="px-3 py-2 bg-[#111] flex justify-between items-center border-b border-white/5">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <div className="w-2 h-2 rounded-full bg-yellow-500/50" />
-          <span className="text-xs font-medium text-slate-300 truncate max-w-[180px]">{data.label}</span>
-        </div>
-        <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
-      </div>
-
-      {/* Filmstrip Content */}
-      <div className="h-24 bg-[#000] relative flex overflow-hidden">
-        {thumbnails.length > 0 ? (
-          <div className="flex w-full h-full">
-            {thumbnails.map((thumb, i) => (
-              <div key={i} className="flex-1 border-r border-black/20 last:border-none overflow-hidden relative">
-                <img
-                  src={`http://localhost:3001${thumb}`}
-                  className="w-full h-full object-cover opacity-80 hover:opacity-100 transition-opacity"
-                  alt={`frame-${i}`}
-                  draggable={false}
-                />
-              </div>
-            ))}
+      {/* Content Container */}
+      <div
+        className={`
+          flex flex-col w-full bg-[#1a1a1a] rounded-xl overflow-hidden transition-all duration-300
+          ${selected ? 'ring-2 ring-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-[1.02]' : 'ring-1 ring-white/10 shadow-xl hover:ring-white/30'}
+          ${data.isPlaying ? 'ring-2 ring-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : ''}
+        `}
+      >
+        {/* Header */}
+        <div className="px-3 py-2 bg-[#111] flex justify-between items-center border-b border-white/5">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <div className="w-2 h-2 rounded-full bg-yellow-500/50" />
+            <span className="text-xs font-medium text-slate-300 truncate max-w-[180px]">{data.label}</span>
           </div>
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 gap-2">
-            <div className="w-6 h-6 rounded-full border-2 border-slate-800 border-t-slate-600 animate-spin" />
-            <span className="text-[10px]">Processing...</span>
-          </div>
-        )}
-
-        {/* Overlays */}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60 pointer-events-none" />
-
-        {/* Time Indicators */}
-        <div className="absolute bottom-1 left-2 font-mono text-[9px] text-white/70">
-          IN: {formatTime(data.startOffset)}
+          <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
         </div>
-        <div className="absolute bottom-1 right-2 font-mono text-[9px] text-white/70">
-          OUT: {formatTime(data.endOffset)}
+
+        {/* Filmstrip Content */}
+        <div className="h-24 bg-[#000] relative flex overflow-hidden">
+          {thumbnails.length > 0 ? (
+            <div className="flex w-full h-full">
+              {thumbnails.map((thumb, i) => (
+                <div key={i} className="flex-1 border-r border-black/20 last:border-none overflow-hidden relative">
+                  <img
+                    src={`http://localhost:3001${thumb}`}
+                    className="w-full h-full object-cover opacity-80 hover:opacity-100 transition-opacity"
+                    alt={`frame-${i}`}
+                    draggable={false}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 gap-2">
+              <div className="w-6 h-6 rounded-full border-2 border-slate-800 border-t-slate-600 animate-spin" />
+              <span className="text-[10px]">Processing...</span>
+            </div>
+          )}
+
+          {/* Overlays */}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60 pointer-events-none" />
+
+          {/* Time Indicators */}
+          <div className="absolute bottom-1 left-2 font-mono text-[9px] text-white/70">
+            IN: {formatTime(data.startOffset)}
+          </div>
+          <div className="absolute bottom-1 right-2 font-mono text-[9px] text-white/70">
+            OUT: {formatTime(data.endOffset)}
+          </div>
         </div>
       </div>
 
@@ -144,7 +147,7 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
       <Handle
         type="source"
         position={Position.Right}
-        className="!bg-yellow-500 !w-4 !h-8 !rounded-l-md !rounded-r-none !border-none !-right-2 top-1/2 transition-transform hover:scale-125"
+        className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-right-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50"
       />
     </div>
   );
@@ -159,10 +162,11 @@ interface TopBarProps {
   isPlaying: boolean;
   handleSplit: () => void;
   handlePlayPause: () => void;
+  handlePlaySequence: () => void;
   onOpenUploadModal: () => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, onOpenUploadModal }) => {
+const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal }) => {
   return (
     <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
       {/* Left: Branding / Status */}
@@ -182,11 +186,18 @@ const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, han
 
         <div className="flex items-center gap-2">
           <Button
+            onClick={(e) => { e.stopPropagation(); handlePlaySequence(); }}
+            className="h-10 px-4 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white border border-white/5 font-bold"
+            title="Play from Start of Sequence"
+          >
+            ⏮ Play All
+          </Button>
+          <Button
             onClick={(e) => { e.stopPropagation(); handlePlayPause(); }}
             disabled={!activeNode}
-            className={`h-10 px-6 rounded-full font-bold transition-all ${isPlaying ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+            className={`h-10 px-6 rounded-full font-bold transition-all ${isPlaying ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
           >
-            {isPlaying ? '⏸ Pause' : '▶ Play'}
+            {isPlaying ? '⏸ Pause' : '▶ Play Clip'}
           </Button>
           <Button
             onClick={(e) => { e.stopPropagation(); handleSplit(); }}
@@ -663,8 +674,60 @@ function EditorApp() {
   }, [screenToFlowPosition, setNodes]);
 
   const onConnect = useCallback((params: Connection) => {
-    setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#eab308', strokeWidth: 2 } }, eds));
+    // Enforce linear sequence:
+    // 1. Remove any existing edge starting from the source handle
+    // 2. Remove any existing edge ending at the target handle
+    setEdges((eds) => {
+      const filtered = eds.filter(e => e.source !== params.source && e.target !== params.target);
+      return addEdge({ ...params, animated: true, style: { stroke: '#eab308', strokeWidth: 2 } }, filtered);
+    });
   }, [setEdges]);
+
+  const handlePlaySequence = useCallback(() => {
+    if (nodes.length === 0) return;
+
+    // Find the start node
+    // If a node is selected, find the root of its chain
+    // Otherwise, find the global root (or the first one found)
+    let startNodeId = selectedNodeId || activeNodeId;
+
+    if (!startNodeId) {
+      // Find a node with no incoming edges
+      const nodesWithIncoming = new Set(edges.map(e => e.target));
+      const rootNode = nodes.find(n => !nodesWithIncoming.has(n.id));
+      if (rootNode) {
+        startNodeId = rootNode.id;
+      } else {
+        // Circular dependency or empty? Just pick the first one
+        startNodeId = nodes[0]?.id;
+      }
+    } else {
+      // Traverse backwards to find the root
+      let currentId = startNodeId;
+      while (true) {
+        const incomingEdge = edges.find(e => e.target === currentId);
+        if (incomingEdge) {
+          currentId = incomingEdge.source;
+        } else {
+          break;
+        }
+      }
+      startNodeId = currentId;
+    }
+
+    if (startNodeId) {
+      const startNode = nodes.find(n => n.id === startNodeId) as ClipNode;
+      if (startNode) {
+        setActiveNodeId(startNodeId);
+        if (videoRef.current) {
+          videoRef.current.src = startNode.data.url;
+          videoRef.current.currentTime = startNode.data.startOffset;
+          videoRef.current.play();
+          setIsPlaying(true);
+        }
+      }
+    }
+  }, [nodes, edges, selectedNodeId, activeNodeId]);
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
     setActiveNodeId(node.id);
@@ -724,6 +787,7 @@ function EditorApp() {
           isPlaying={isPlaying}
           handleSplit={handleSplit}
           handlePlayPause={handlePlayPause}
+          handlePlaySequence={handlePlaySequence}
           onOpenUploadModal={() => setIsUploadModalOpen(true)} // PASS NEW HANDLER
         />
 
