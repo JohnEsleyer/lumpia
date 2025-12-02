@@ -11,7 +11,8 @@ import {
     addOperation,
     deleteProject,
     addAsset,
-    getProjectAssets // Import this
+    getProjectAssets,
+    deleteProjectAsset // Import this
 } from './projectManager';
 import { processOperation } from './processor';
 import { transcribeVideo } from './transcriber';
@@ -78,6 +79,16 @@ projectRouter.post('/:id/assets', upload.single('file'), async (req: Request, re
         const assets = await getProjectAssets(req.params.id);
         res.json(assets);
     } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+projectRouter.delete('/:id/assets/:filename', async (req: Request, res: Response) => {
+    try {
+        await deleteProjectAsset(req.params.id, req.params.filename);
+        res.status(204).send();
+    } catch (error: any) {
+        console.error("Asset deletion error:", error);
         res.status(500).json({ error: error.message });
     }
 });

@@ -72,3 +72,10 @@ export async function transcribeVideo(projectId: string): Promise<any> {
     if (!res.ok) throw new Error("Transcription failed");
     return res.json();
 }
+
+export async function deleteAsset(projectId: string, assetName: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/${projectId}/assets/${encodeURIComponent(assetName)}`, {
+        method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete asset');
+}

@@ -323,3 +323,37 @@ export async function deleteProject(id: string): Promise<void> {
     // Force recursive delete
     await fs.rm(targetDir, { recursive: true, force: true });
 }
+
+/**
+ * Deletes a specific asset from a project.
+ */
+export async function deleteProjectAsset(projectId: string, assetName: string): Promise<void> {
+    const project = await getProject(projectId);
+    if (!project) throw new Error('Project not found');
+
+    const projectDir = path.join(PROJECTS_DIR, projectId);
+    const assetPath = path.join(projectDir, 'source', assetName);
+    const thumbPath = path.join(projectDir, 'source', `${assetName}.jpg`);
+    const filmstripDir = path.join(projectDir, 'filmstrips', assetName);
+
+    // 1. Delete video file
+    try {
+        await fs.unlink(assetPath);
+    } catch (e) {
+        console.warn(`[Server] Failed to delete asset file ${assetPath}`, e);
+    }
+
+    // 2. Delete thumbnail
+    try {
+        await fs.unlink(thumbPath);
+    } catch (e) { /* ignore if missing */ }
+
+    // 3. Delete filmstrip directory
+    try {
+        await fs.rm(filmstripDir, { recursive: true, force: true });
+    } catch (e) { /* ignore if missing */ }
+
+    // 4. Update Project State
+    project.assets = project.assets.filter(a => a !== assetName);
+    await saveProjectState(projectId, project);
+}

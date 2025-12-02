@@ -19,7 +19,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { getProject, getProjectAssets, addAsset } from '../api';
+import { getProject, getProjectAssets, addAsset, deleteAsset } from '../api';
 import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
 import { useFFmpeg } from '../hooks/useFFmpeg'; // <-- NEW IMPORT
@@ -425,6 +425,8 @@ function EditorApp() {
   const [libraryAssets, setLibraryAssets] = useState<LibraryAsset[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false); // NEW STATE
+  const [isLoadingProject, setIsLoadingProject] = useState(true); // NEW: Loading state
+  const [loadingStatus, setLoadingStatus] = useState("Initializing..."); // NEW: Loading text
 
   const [nodes, setNodes, onNodesChange] = useNodesState<ClipNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -449,13 +451,54 @@ function EditorApp() {
   // --- ASSET MANAGEMENT ---
   const handleRemoveAsset = useCallback(async (assetName: string) => {
     if (!projectId) return;
-    if (!confirm(`Are you sure you want to remove the asset "${assetName}" from the project library? This will not remove it from existing nodes.`)) return;
+    if (!confirm(`Are you sure you want to remove the asset "${assetName}" from the project library? This will remove all instances from the timeline.`)) return;
 
-    // TODO: Implement actual backend call to delete asset from project source folder
+    try {
+      // 1. Call API to delete
+      await deleteAsset(projectId, assetName);
 
-    setLibraryAssets(prev => prev.filter(asset => asset.name !== assetName));
-    alert(`Asset "${assetName}" removed from library (Backend removal pending).`);
-  }, [projectId]);
+      // 2. Remove from library state
+      setLibraryAssets(prev => prev.filter(asset => asset.name !== assetName));
+
+      // 3. Remove from timeline (Nodes)
+      setNodes(nds => nds.filter(n => n.data.label !== assetName));
+
+      // 4. Cleanup Edges (React Flow handles this automatically if nodes are removed, but good to be safe)
+      // Actually, React Flow doesn't auto-remove edges if we just filter nodes state, we need to filter edges too usually,
+      // but `onNodesChange` handles it if it was a user action. Here we are doing it programmatically.
+      // Let's filter edges that connect to removed nodes.
+      // We need to find the IDs of removed nodes first.
+      // Wait, we are filtering by label.
+
+      setNodes(currentNodes => {
+        const nodesKeep = currentNodes.filter(n => n.data.label !== assetName);
+        const keptIds = new Set(nodesKeep.map(n => n.id));
+
+        setEdges(currentEdges => currentEdges.filter(e => keptIds.has(e.source) && keptIds.has(e.target)));
+
+        return nodesKeep;
+      });
+
+      // 5. Reset active node if needed
+      if (activeNodeId) {
+        setNodes(currentNodes => {
+          const activeNodeStillExists = currentNodes.find(n => n.id === activeNodeId);
+          if (!activeNodeStillExists) {
+            setActiveNodeId(null);
+            if (videoRef.current) {
+              videoRef.current.pause();
+              videoRef.current.removeAttribute('src');
+            }
+          }
+          return currentNodes;
+        });
+      }
+
+    } catch (error) {
+      console.error("Failed to delete asset:", error);
+      alert("Failed to delete asset from server.");
+    }
+  }, [projectId, activeNodeId, setNodes, setEdges]);
 
 
   // --- UPLOAD LOGIC ---
@@ -507,11 +550,25 @@ function EditorApp() {
   // Load project
   useEffect(() => {
     if (projectId) {
+      setIsLoadingProject(true);
+      setLoadingStatus("Fetching Project Metadata...");
+
       getProject(projectId).then(async (p) => {
         setProject(p);
         if (!p) return;
+
+        setLoadingStatus("Fetching Assets...");
         const assets = await getProjectAssets(projectId);
+
+        // Simulate "counting" for better UX if it's instant
+        setLoadingStatus(`Received ${assets.length} assets...`);
+        await new Promise(r => setTimeout(r, 500)); // Small delay to let user see the count
+
         setLibraryAssets(assets);
+        setIsLoadingProject(false);
+      }).catch(err => {
+        console.error(err);
+        setLoadingStatus("Failed to load project.");
       });
     }
   }, [projectId]);
@@ -774,7 +831,14 @@ function EditorApp() {
   }, [selectedNodeId, activeNodeId, isPlaying, setNodes, setEdges]);
 
 
-  if (!projectId || !project) return <div className="flex items-center justify-center h-screen bg-[#050505] text-white">Loading Project...</div>;
+  if (isLoadingProject || !projectId || !project) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-[#050505] text-white gap-4">
+        <div className="w-12 h-12 rounded-full border-4 border-slate-800 border-t-yellow-500 animate-spin" />
+        <div className="text-sm font-mono text-slate-400 animate-pulse">{loadingStatus}</div>
+      </div>
+    );
+  }
 
   return (
     <>
