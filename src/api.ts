@@ -89,3 +89,13 @@ export async function exportProject(projectId: string, clips: { url: string; sta
     if (!res.ok) throw new Error('Failed to export project');
     return res.blob();
 }
+
+export async function renderSequence(projectId: string, clips: { url: string; start: number; end: number }[]): Promise<{ url: string }> {
+    const res = await fetch(`http://localhost:3001/api/projects/${projectId}/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clips }),
+    });
+    if (!res.ok) throw new Error('Failed to render sequence');
+    return res.json();
+}

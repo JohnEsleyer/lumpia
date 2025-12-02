@@ -181,3 +181,27 @@ projectRouter.post('/:id/transcribe', async (req: Request, res: Response) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+projectRouter.post('/:id/render', async (req: Request, res: Response) => {
+    try {
+        const project = await getProject(req.params.id);
+        if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+        const { clips } = req.body;
+        if (!clips || !Array.isArray(clips) || clips.length === 0) {
+            res.status(400).json({ error: 'No clips provided' });
+            return;
+        }
+
+        // Reuse 'stitch' logic but treat as a temporary operation
+        const operation = { type: 'stitch', params: { clips }, id: `temp_render_${Date.now()}` };
+
+        // Process generates the file in /artifacts
+        const webPath = await processOperation(project, operation as any);
+
+        res.json({ url: webPath });
+    } catch (error: any) {
+        console.error("Render error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});

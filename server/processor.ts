@@ -45,8 +45,6 @@ export async function standardizeVideo(inputPath: string, outputDir: string): Pr
             .output(outputPath)
             .on('end', async () => {
                 console.log('[Processor] Standardization complete');
-                // Optional: Delete original if you want to save space
-                // await fs.unlink(inputPath); 
                 resolve(outputName);
             })
             .on('error', (err) => {
@@ -59,24 +57,36 @@ export async function standardizeVideo(inputPath: string, outputDir: string): Pr
 
 
 export async function processOperation(project: Project, operation: ProjectOperation): Promise<string> {
-    if (!project.currentHead) {
+    // Stitch operations might not use the currentHead (they might combine multiple assets),
+    // so we skip this check for 'stitch'.
+    if (!project.currentHead && operation.type !== 'stitch') {
         throw new Error("Project has no current video head to process");
     }
 
-    const relativePath = project.currentHead.replace(/^\/projects\//, '');
-    const absoluteInputPath = path.join(__dirname, 'projects', relativePath);
-
-    const outputFileName = `v${project.operations.length + 1}_${operation.type}.mp4`;
+    // Prepare Output Directory
     const outputDir = path.join(__dirname, 'projects', project.id, 'artifacts');
+    try {
+        await fs.mkdir(outputDir, { recursive: true });
+    } catch (e) { /* ignore if exists */ }
+
+    // Generate Output Filename
+    const outputFileName = `v${project.operations.length + 1}_${operation.type}_${operation.id}.mp4`;
     const absoluteOutputPath = path.join(outputDir, outputFileName);
 
-    console.log(`Processing ${operation.type} on ${absoluteInputPath} -> ${absoluteOutputPath}`);
+    // Determine Input Path (for single-file operations)
+    let absoluteInputPath = '';
+    if (project.currentHead) {
+        // Remove the web prefix /projects/ID/... to get relative path
+        const relativePath = project.currentHead.replace(/^\/projects\//, '');
+        absoluteInputPath = path.join(__dirname, 'projects', relativePath);
+    }
+
+    console.log(`[Processor] Processing ${operation.type}...`);
 
     return new Promise(async (resolve, reject) => {
         const command = ffmpeg(absoluteInputPath);
 
         if (operation.type === 'trim') {
-            // ... (existing trim code)
             const { start, end } = operation.params;
             command.setStartTime(start).setDuration(end - start)
                 .output(absoluteOutputPath)
@@ -84,9 +94,8 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 .on('error', reject).run();
 
         } else if (operation.type === 'text') {
-            // ... (existing text code)
-            // Simplified for brevity, assume existing code is here
             const { text, x, y, fontSize, color } = operation.params;
+            // FFmpeg drawtext filter
             const filterString = `drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)*${x}/100:y=(h-text_h)*${y}/100`;
             command.videoFilters([filterString])
                 .output(absoluteOutputPath)
@@ -94,32 +103,55 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 .on('error', reject).run();
 
         } else if (operation.type === 'stitch') {
+            // Params: clips: { url, start, end }[]
             const clips = operation.params.clips as { url: string; start: number; end: number }[];
             const tempFiles: string[] = [];
 
             try {
-                // 1. Create temporary trimmed files for each clip
+                // 1. Process each clip: Trim and Standardize
                 for (let i = 0; i < clips.length; i++) {
                     const clip = clips[i];
-                    // Extract filename from URL (assuming /projects/:id/source/:filename format)
-                    const filename = clip.url.split('/').pop();
+
+                    // FIX: Decode URI to handle spaces (%20)
+                    const rawFilename = clip.url.split('/').pop() || '';
+                    const filename = decodeURIComponent(rawFilename);
+
                     if (!filename) throw new Error(`Invalid clip URL: ${clip.url}`);
 
-                    const inputPath = path.join(__dirname, 'projects', project.id, 'source', filename);
+                    // FIX: Determine if file is in 'source' or 'artifacts'
+                    const isArtifact = clip.url.includes('/artifacts/');
+                    const folder = isArtifact ? 'artifacts' : 'source';
+                    const inputPath = path.join(__dirname, 'projects', project.id, folder, filename);
+
+                    // Verify file exists
+                    try {
+                        await fs.access(inputPath);
+                    } catch {
+                        throw new Error(`File not found on server: ${inputPath}`);
+                    }
+
+                    // Duration safety
+                    let duration = clip.end - clip.start;
+                    if (duration <= 0.1) duration = 0.1;
+
                     const tempName = `temp_stitch_${i}_${Date.now()}.mp4`;
                     const tempPath = path.join(outputDir, tempName);
 
+                    // Create a standardized chunk
                     await new Promise<void>((resolveTrim, rejectTrim) => {
                         ffmpeg(inputPath)
                             .setStartTime(clip.start)
-                            .setDuration(clip.end - clip.start)
+                            .setDuration(duration)
                             .outputOptions([
                                 '-c:v libx264', '-preset ultrafast', '-crf 23',
-                                '-c:a aac', '-b:a 128k'
-                            ]) // Re-encode to ensure consistent format for concat
+                                '-c:a aac', '-b:a 128k', '-ar 44100' // Normalize audio rate
+                            ])
                             .output(tempPath)
                             .on('end', () => resolveTrim())
-                            .on('error', rejectTrim)
+                            .on('error', (err) => {
+                                console.error(`[Processor] Clip ${i} failed:`, err);
+                                rejectTrim(err);
+                            })
                             .run();
                     });
                     tempFiles.push(tempPath);
@@ -128,7 +160,13 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 // 2. Create concat list file
                 const listFileName = `concat_list_${Date.now()}.txt`;
                 const listPath = path.join(outputDir, listFileName);
-                const fileContent = tempFiles.map(f => `file '${f}'`).join('\n');
+
+                // Escape paths for FFmpeg concat demuxer
+                // Windows paths with backslashes need to be converted to forward slashes or escaped
+                const fileContent = tempFiles
+                    .map(f => `file '${f.replace(/\\/g, '/')}'`)
+                    .join('\n');
+
                 await fs.writeFile(listPath, fileContent);
 
                 // 3. Concatenate
@@ -136,17 +174,20 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     ffmpeg()
                         .input(listPath)
                         .inputOptions(['-f concat', '-safe 0'])
-                        .outputOptions(['-c copy']) // Copy since we re-encoded segments to match
+                        .outputOptions(['-c copy']) // Stream copy for speed (formats already matched)
                         .output(absoluteOutputPath)
                         .on('end', () => resolveConcat())
-                        .on('error', rejectConcat)
+                        .on('error', (err) => {
+                            console.error("[Processor] Concat failed:", err);
+                            rejectConcat(err);
+                        })
                         .run();
                 });
 
                 // 4. Cleanup
-                await fs.unlink(listPath).catch(console.error);
+                await fs.unlink(listPath).catch(() => { });
                 for (const f of tempFiles) {
-                    await fs.unlink(f).catch(console.error);
+                    await fs.unlink(f).catch(() => { });
                 }
 
                 resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
@@ -167,21 +208,18 @@ export async function processOperation(project: Project, operation: ProjectOpera
             const srtPath = path.join(outputDir, `temp_${Date.now()}.srt`);
             await fs.writeFile(srtPath, srtContent);
 
-            // 2. Burn subtitles using FFmpeg
-            // Note: 'subtitles' filter is powerful. 
-            // force_style allows us to mimic the React design loosely (Font, Size, Outline)
+            // 2. Burn subtitles
+            // Escape path for Windows filter syntax: C:\Path -> C:/Path and : -> \:
+            const srtUrl = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+
             const style = "Fontname=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=20";
 
-            // For Windows paths, FFmpeg requires escaping in the subtitles filter
-            // const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-            // Simplified relative path usage often works better to avoid drive letter issues:
-
             command
-                .videoFilters(`subtitles=${srtPath}:force_style='${style}'`)
+                .videoFilters(`subtitles='${srtUrl}':force_style='${style}'`)
                 .output(absoluteOutputPath)
                 .on('end', async () => {
                     console.log('Subtitle burn-in finished');
-                    await fs.unlink(srtPath).catch(console.error); // Cleanup
+                    await fs.unlink(srtPath).catch(() => { });
                     resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
                 })
                 .on('error', (err) => {
