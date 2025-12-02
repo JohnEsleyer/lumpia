@@ -79,3 +79,13 @@ export async function deleteAsset(projectId: string, assetName: string): Promise
     });
     if (!res.ok) throw new Error('Failed to delete asset');
 }
+
+export async function exportProject(projectId: string, clips: { url: string; start: number; end: number }[]): Promise<Blob> {
+    const res = await fetch(`${API_BASE}/${projectId}/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clips }),
+    });
+    if (!res.ok) throw new Error('Failed to export project');
+    return res.blob();
+}

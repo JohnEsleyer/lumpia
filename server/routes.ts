@@ -93,6 +93,52 @@ projectRouter.delete('/:id/assets/:filename', async (req: Request, res: Response
     }
 });
 
+projectRouter.post('/:id/export', async (req: Request, res: Response) => {
+    try {
+        const project = await getProject(req.params.id);
+        if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
+
+        const { clips } = req.body;
+        if (!clips || !Array.isArray(clips) || clips.length === 0) {
+            res.status(400).json({ error: 'No clips provided for export' });
+            return;
+        }
+
+        // Use 'stitch' operation type for export
+        const operation = { type: 'stitch', params: { clips }, id: Date.now().toString() };
+
+        // Process the operation (this will generate the file in artifacts)
+        const webPath = await processOperation(project, operation as any);
+
+        // Convert web path (e.g., /projects/id/artifacts/file.mp4) to absolute system path
+        const relativePath = webPath.replace(/^\/projects\//, '');
+        const absolutePath = path.join(__dirname, 'projects', relativePath);
+
+        const filename = `${project.name.replace(/[^a-z0-9]/gi, '_')}_export.mp4`;
+
+        // Stream the file to the client and delete it afterwards
+        res.download(absolutePath, filename, async (err) => {
+            if (err) {
+                console.error("Export download error:", err);
+                // Can't send JSON error if headers already sent, but log it
+            }
+
+            // Cleanup: Delete the generated artifact so it doesn't persist
+            try {
+                await fs.unlink(absolutePath);
+            } catch (unlinkErr) {
+                console.warn(`Failed to delete exported file: ${absolutePath}`, unlinkErr);
+            }
+        });
+
+    } catch (error: any) {
+        console.error("Export error:", error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message });
+        }
+    }
+});
+
 projectRouter.post('/:id/operations', async (req: Request, res: Response) => {
     try {
         const project = await getProject(req.params.id);

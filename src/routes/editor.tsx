@@ -19,11 +19,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { getProject, getProjectAssets, addAsset, deleteAsset } from '../api';
+import { getProject, getProjectAssets, addAsset, deleteAsset, exportProject } from '../api';
 import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
-import { useFFmpeg } from '../hooks/useFFmpeg'; // <-- NEW IMPORT
-import { fetchFile } from '@ffmpeg/util';       // <-- NEW IMPORT
+import { useFFmpeg } from '../hooks/useFFmpeg';
+import { fetchFile } from '@ffmpeg/util';
 
 export const Route = createFileRoute('/editor')({
   component: () => (
@@ -166,9 +166,10 @@ interface TopBarProps {
   onOpenUploadModal: () => void;
   isLibraryVisible: boolean;
   toggleLibrary: () => void;
+  handleExport: () => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal, isLibraryVisible, toggleLibrary }) => {
+const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal, isLibraryVisible, toggleLibrary, handleExport }) => {
   return (
     <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
       {/* Left: Branding / Status */}
@@ -229,7 +230,10 @@ const TopBar: React.FC<TopBarProps> = ({ activeNode, currentTime, isPlaying, han
         >
           + Asset
         </Button>
-        <Button className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400">
+        <Button
+          onClick={handleExport}
+          className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400"
+        >
           Export
         </Button>
       </div>
@@ -427,6 +431,34 @@ const AddAssetModal: React.FC<AddAssetModalProps> = ({
   );
 };
 
+// --- NEW: Export Loading Modal ---
+const ExportLoadingModal = ({ isOpen }: { isOpen: boolean }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] animate-in fade-in duration-300">
+      <div className="bg-[#0f0f0f] border border-white/10 rounded-3xl p-10 flex flex-col items-center gap-6 shadow-[0_0_50px_rgba(59,130,246,0.15)] max-w-sm w-full mx-6 relative overflow-hidden">
+        {/* Background Glow */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-blue-500/20 blur-[50px] rounded-full pointer-events-none" />
+
+        <div className="relative z-10">
+          <div className="w-20 h-20 border-4 border-white/5 border-t-blue-500 rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center text-3xl animate-pulse">
+            🎥
+          </div>
+        </div>
+
+        <div className="text-center space-y-2 z-10">
+          <h3 className="text-2xl font-black text-white tracking-tight">Exporting Project</h3>
+          <p className="text-slate-400 text-sm font-medium">
+            We're stitching your clips together.<br />
+            Please do not close this tab.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function EditorApp() {
   const { projectId } = Route.useSearch();
@@ -439,6 +471,7 @@ function EditorApp() {
   const [isLoadingProject, setIsLoadingProject] = useState(true); // NEW: Loading state
   const [loadingStatus, setLoadingStatus] = useState("Initializing..."); // NEW: Loading text
   const [isLibraryVisible, setIsLibraryVisible] = useState(true); // NEW: Library visibility
+  const [isExporting, setIsExporting] = useState(false); // NEW: Export state
 
   const [nodes, setNodes, onNodesChange] = useNodesState<ClipNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -537,6 +570,71 @@ function EditorApp() {
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // --- EXPORT LOGIC ---
+  const handleExport = async () => {
+    if (!projectId || nodes.length === 0) return;
+
+    // 1. Determine the sequence
+    // Find start node (similar to Play Sequence logic)
+    let startNodeId = null;
+    const nodesWithIncoming = new Set(edges.map(e => e.target));
+    const rootNode = nodes.find(n => !nodesWithIncoming.has(n.id));
+    if (rootNode) {
+      startNodeId = rootNode.id;
+    } else {
+      startNodeId = nodes[0]?.id;
+    }
+
+    if (!startNodeId) return;
+
+    // Traverse
+    const sequence: ClipNode[] = [];
+    let currentId: string | null = startNodeId;
+    while (currentId) {
+      const node = nodes.find(n => n.id === currentId);
+      if (node) {
+        sequence.push(node);
+        const outgoingEdge = edges.find(e => e.source === currentId);
+        currentId = outgoingEdge ? outgoingEdge.target : null;
+      } else {
+        break;
+      }
+    }
+
+    if (sequence.length === 0) return;
+
+    setIsExporting(true);
+    try {
+      const clips = sequence.map(node => ({
+        url: node.data.url,
+        start: node.data.startOffset,
+        end: node.data.endOffset
+      }));
+
+      // UPDATED: Handle Blob download
+      const blob = await exportProject(projectId, clips);
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Use project name or ID for filename
+      const safeName = project?.name.replace(/[^a-z0-9]/gi, '_') || 'video';
+      a.download = `${safeName}_export.mp4`;
+      document.body.appendChild(a);
+      a.click();
+
+      // Cleanup
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+    } catch (error) {
+      console.error("Export failed", error);
+      alert("Export failed. Check console.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -867,6 +965,7 @@ function EditorApp() {
           onOpenUploadModal={() => setIsUploadModalOpen(true)} // PASS NEW HANDLER
           isLibraryVisible={isLibraryVisible}
           toggleLibrary={() => setIsLibraryVisible(prev => !prev)}
+          handleExport={handleExport}
         />
 
         <div className="flex flex-1 overflow-hidden">
@@ -982,6 +1081,9 @@ function EditorApp() {
         projectId={projectId}
         onAssetAdded={handleAssetAdded}
       />
+
+      {/* NEW: Export Loading Modal */}
+      <ExportLoadingModal isOpen={isExporting} />
     </>
   );
 }

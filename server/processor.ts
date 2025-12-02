@@ -94,11 +94,70 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 .on('error', reject).run();
 
         } else if (operation.type === 'stitch') {
-            // ... (existing stitch code)
-            const clips = operation.params.clips;
-            // ... (existing logic)
-            // Mocking resolution for brevity of this diff
-            resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
+            const clips = operation.params.clips as { url: string; start: number; end: number }[];
+            const tempFiles: string[] = [];
+
+            try {
+                // 1. Create temporary trimmed files for each clip
+                for (let i = 0; i < clips.length; i++) {
+                    const clip = clips[i];
+                    // Extract filename from URL (assuming /projects/:id/source/:filename format)
+                    const filename = clip.url.split('/').pop();
+                    if (!filename) throw new Error(`Invalid clip URL: ${clip.url}`);
+
+                    const inputPath = path.join(__dirname, 'projects', project.id, 'source', filename);
+                    const tempName = `temp_stitch_${i}_${Date.now()}.mp4`;
+                    const tempPath = path.join(outputDir, tempName);
+
+                    await new Promise<void>((resolveTrim, rejectTrim) => {
+                        ffmpeg(inputPath)
+                            .setStartTime(clip.start)
+                            .setDuration(clip.end - clip.start)
+                            .outputOptions([
+                                '-c:v libx264', '-preset ultrafast', '-crf 23',
+                                '-c:a aac', '-b:a 128k'
+                            ]) // Re-encode to ensure consistent format for concat
+                            .output(tempPath)
+                            .on('end', () => resolveTrim())
+                            .on('error', rejectTrim)
+                            .run();
+                    });
+                    tempFiles.push(tempPath);
+                }
+
+                // 2. Create concat list file
+                const listFileName = `concat_list_${Date.now()}.txt`;
+                const listPath = path.join(outputDir, listFileName);
+                const fileContent = tempFiles.map(f => `file '${f}'`).join('\n');
+                await fs.writeFile(listPath, fileContent);
+
+                // 3. Concatenate
+                await new Promise<void>((resolveConcat, rejectConcat) => {
+                    ffmpeg()
+                        .input(listPath)
+                        .inputOptions(['-f concat', '-safe 0'])
+                        .outputOptions(['-c copy']) // Copy since we re-encoded segments to match
+                        .output(absoluteOutputPath)
+                        .on('end', () => resolveConcat())
+                        .on('error', rejectConcat)
+                        .run();
+                });
+
+                // 4. Cleanup
+                await fs.unlink(listPath).catch(console.error);
+                for (const f of tempFiles) {
+                    await fs.unlink(f).catch(console.error);
+                }
+
+                resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
+
+            } catch (err) {
+                // Cleanup on error
+                for (const f of tempFiles) {
+                    await fs.unlink(f).catch(() => { });
+                }
+                reject(err);
+            }
 
         } else if (operation.type === 'subtitle') {
             const { subtitles } = operation.params;
