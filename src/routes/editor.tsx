@@ -31,6 +31,9 @@ import {
   FlaskConical,
   Loader2,
   MonitorPlay,
+  X,
+  Clapperboard,
+  Layers,
   Save
 } from 'lucide-react';
 
@@ -82,7 +85,7 @@ const formatTime = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}.${ms}`;
 };
 
-import { X } from 'lucide-react';
+// --- Node Components ---
 
 const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
   const { setNodes } = useReactFlow();
@@ -142,14 +145,152 @@ const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
       <Handle type="source" position={Position.Right} className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-right-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50" />
     </div>
   );
-
 };
 
 const nodeTypes = { clip: FilmstripNode, output: OutputNode };
 const edgeTypes = { 'button-edge': ButtonEdge };
 
-// TopBar
-const TopBar = ({ activeNode, onSave, isSaving, isSaved, isLibraryVisible, toggleLibrary, handleExport }: any) => (
+// --- Library Panel Component ---
+
+const LibraryPanel = ({
+  assets,
+  onOpenUploadModal,
+  onDragStart,
+  isVisible
+}: {
+  assets: LibraryAsset[],
+  onOpenUploadModal: () => void,
+  onDragStart: (e: React.DragEvent, type: string, payload: any) => void,
+  isVisible: boolean
+}) => {
+  const [activeTab, setActiveTab] = useState<'media' | 'nodes'>('media');
+
+  if (!isVisible) return null;
+
+  return (
+    <aside className="w-[300px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0 transition-all select-none">
+      {/* Tabs */}
+      <div className="flex border-b border-white/5">
+        <button
+          onClick={() => setActiveTab('media')}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 
+                    ${activeTab === 'media'
+              ? 'border-yellow-500 text-white bg-white/5'
+              : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+        >
+          <span className="flex items-center justify-center gap-2"><Clapperboard size={14} /> Clips</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('nodes')}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 
+                    ${activeTab === 'nodes'
+              ? 'border-purple-500 text-white bg-white/5'
+              : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+        >
+          <span className="flex items-center justify-center gap-2"><Layers size={14} /> Nodes</span>
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+        {activeTab === 'media' ? (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Project Clips</span>
+              <Button onClick={onOpenUploadModal} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 border-0">
+                + Add Clip
+              </Button>
+            </div>
+
+            {assets.length === 0 && (
+              <div className="text-center py-8 border border-dashed border-white/10 rounded-lg">
+                <span className="text-2xl block mb-2 opacity-50">📹</span>
+                <p className="text-xs text-slate-500">No clips added yet</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-2">
+              {assets.map(asset => (
+                <div
+                  key={asset.name}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, 'asset', asset)}
+                  className="group flex gap-3 p-2 rounded-lg bg-[#151515] border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing hover:bg-[#1a1a1a] transition-all hover:shadow-lg hover:shadow-black/50"
+                >
+                  <div className="w-20 h-12 bg-black rounded-md overflow-hidden shrink-0 relative border border-white/5">
+                    {asset.thumbnailUrl ? (
+                      <img src={`http://localhost:3001${asset.thumbnailUrl}`} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={asset.name} />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-600 text-[10px]">No Prev</div>
+                    )}
+                    <div className="absolute bottom-0 right-0 bg-black/80 px-1 rounded-tl-md text-[8px] font-mono text-white">
+                      {asset.duration ? formatTime(asset.duration) : '0:00'}
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1 flex flex-col justify-center">
+                    <div className="text-xs font-bold text-slate-200 truncate group-hover:text-yellow-400 transition-colors">{asset.name}</div>
+                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">Video Clip</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Processors</div>
+              <div
+                draggable
+                onDragStart={(e) => onDragStart(e, 'node-output', {})}
+                className="p-3 bg-[#151515] border border-purple-500/30 rounded-xl cursor-grab active:cursor-grabbing hover:bg-[#1a1a1a] hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.2)] transition-all group select-none"
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
+                    <FlaskConical size={20} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-slate-200 group-hover:text-purple-400 transition-colors">Output Node</div>
+                    <div className="text-[10px] text-slate-500">Render & Preview</div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-500 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
+                  Final destination for your sequence. Connect clips here to render.
+                </div>
+              </div>
+            </div>
+
+            {/* Placeholder for future nodes */}
+            <div className="opacity-50 pointer-events-none grayscale">
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Effects (Coming Soon)</div>
+              <div className="p-3 bg-[#151515] border border-white/5 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                    <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-slate-200">Color Grade</div>
+                    <div className="text-[10px] text-slate-500">Filter</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+};
+
+// --- Top Bar ---
+const TopBar = ({
+  activeNode,
+  onOpenUploadModal, // Kept for modal triggers elsewhere, but removed from top bar button
+  isLibraryVisible,
+  toggleLibrary,
+  handleExport,
+  onSave,
+  isSaving,
+  lastSaved
+}: any) => (
   <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
     <div className="flex items-center gap-4">
       <Button onClick={toggleLibrary} className={`p-2 rounded-md transition-colors ${isLibraryVisible ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}>
@@ -161,16 +302,20 @@ const TopBar = ({ activeNode, onSave, isSaving, isSaved, isLibraryVisible, toggl
     </div>
 
     <div className="flex items-center gap-3">
-      {/* Small Saved Text Indicator */}
-      {isSaved && (
-        <span className="text-xs font-bold text-emerald-500 animate-in fade-in slide-in-from-right-2 duration-300 mr-1">
-          Saved
+      {lastSaved && !isSaving && (
+        <span className="text-xs text-green-500 font-medium animate-in fade-in mr-2 flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> Saved
         </span>
       )}
 
-      <Button onClick={onSave} disabled={isSaving} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 flex items-center gap-2">
-        <Save size={14} /> {isSaving ? 'Saving...' : 'Save Graph'}
+      <Button
+        onClick={onSave}
+        isLoading={isSaving}
+        className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 flex items-center gap-2"
+      >
+        <Save size={14} /> Save
       </Button>
+
       <Button onClick={handleExport} className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400 flex items-center gap-2">
         <Download size={14} /> Export
       </Button>
@@ -178,10 +323,10 @@ const TopBar = ({ activeNode, onSave, isSaving, isSaved, isLibraryVisible, toggl
   </div>
 );
 
-// Modals
+// --- Modals ---
 const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded }) => isOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">Modal Stub</div> : null;
 
-// ProgressBar Component
+// --- Progress Bar ---
 const ProgressBar = ({ currentTime, duration, onSeek }: { currentTime: number, duration: number, onSeek: (time: number) => void }) => {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -239,17 +384,21 @@ const ProgressBar = ({ currentTime, duration, onSeek }: { currentTime: number, d
   );
 };
 
+// --- Main App Component ---
+
 function EditorApp() {
   const { projectId } = Route.useSearch();
   const { screenToFlowPosition, getNodes, getEdges } = useReactFlow();
 
   const [project, setProject] = useState<Project | null>(null);
   const [libraryAssets, setLibraryAssets] = useState<LibraryAsset[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isLoadingProject, setIsLoadingProject] = useState(true);
   const [isLibraryVisible, setIsLibraryVisible] = useState(true);
-  const [activeTab, setActiveTab] = useState<'media' | 'nodes'>('media');
+
+  // Saving State
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -260,9 +409,6 @@ function EditorApp() {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isSavingGraph, setIsSavingGraph] = useState(false); // Add state for saving
-  const [graphSaved, setGraphSaved] = useState(false); // 2. Add state for success message
-
 
   // Handle Node Selection & Preview
   useOnSelectionChange({
@@ -282,16 +428,12 @@ function EditorApp() {
         } else if (selected.type === 'clip') {
           const clipData = selected.data as ClipData;
           if (videoRef.current) {
-            // If switching to a new clip, update src
-            // Note: In a real app we might want to avoid reloading if it's the same URL, 
-            // but here we want to ensure we are previewing the selected clip.
             const currentSrc = videoRef.current.src;
             const newSrc = clipData.url;
 
-            // Only update if different to prevent flickering/resetting if we just clicked the same node
             if (currentSrc !== newSrc) {
               videoRef.current.src = newSrc;
-              videoRef.current.currentTime = clipData.startOffset; // Start preview at clip start
+              videoRef.current.currentTime = clipData.startOffset;
             }
           }
         }
@@ -419,45 +561,45 @@ function EditorApp() {
       setIsLoadingProject(true);
       getProject(projectId).then(async (p) => {
         setProject(p);
-
-        // RESTORE STATE
-        if (p.editorState) {
-          setNodes(p.editorState.nodes || []);
-          setEdges(p.editorState.edges || []);
-        }
-
         const assets = await getProjectAssets(projectId);
         setLibraryAssets(assets);
+        
+        // Restore Editor State if exists
+        if (p.editorState) {
+          if (p.editorState.nodes) setNodes(p.editorState.nodes);
+          if (p.editorState.edges) setEdges(p.editorState.edges);
+        }
+        
         setIsLoadingProject(false);
       }).catch(console.error);
     }
-  }, [projectId, setNodes, setEdges]);
+  }, [projectId]);
 
-  const handleSaveGraph = async () => {
+  // Saving Logic
+  const handleSaveProject = async () => {
     if (!projectId) return;
-    setIsSavingGraph(true);
-    setGraphSaved(false); // Reset status
+    setIsSaving(true);
+    setLastSaved(null); // Reset to clear previous "Saved" message if any
+
+    const editorState = {
+      nodes: getNodes(),
+      edges: getEdges()
+    };
+
     try {
-      const currentNodes = getNodes();
-      const currentEdges = getEdges();
-
-      await updateProject(projectId, {
-        editorState: {
-          nodes: currentNodes,
-          edges: currentEdges
-        }
-      });
-
-      // Trigger success state
-      setGraphSaved(true);
-      // Hide message after 2 seconds
-      setTimeout(() => setGraphSaved(false), 2000);
-
+      await updateProject(projectId, { editorState });
+      // Simulate a small delay for better UX or if API is too fast
+      setTimeout(() => {
+        setIsSaving(false);
+        setLastSaved(new Date());
+        
+        // Hide the "Saved" text after 3 seconds
+        setTimeout(() => setLastSaved(null), 3000);
+      }, 500);
     } catch (e) {
-      console.error("Failed to save graph", e);
-      alert("Failed to save workspace");
-    } finally {
-      setIsSavingGraph(false);
+      console.error("Failed to save project", e);
+      setIsSaving(false);
+      alert("Failed to save project state.");
     }
   };
 
@@ -489,13 +631,11 @@ function EditorApp() {
     const clipData = node.data as ClipData;
     const splitTime = currentTime;
 
-    // Validate split time
     if (splitTime <= clipData.startOffset + 0.1 || splitTime >= clipData.endOffset - 0.1) {
       alert("Cannot split too close to the edge");
       return;
     }
 
-    // Create two new nodes
     const leftNode: ClipNode = {
       ...node,
       id: crypto.randomUUID(),
@@ -508,37 +648,27 @@ function EditorApp() {
     const rightNode: ClipNode = {
       ...node,
       id: crypto.randomUUID(),
-      position: { x: node.position.x + 350, y: node.position.y }, // Offset slightly
+      position: { x: node.position.x + 350, y: node.position.y },
       data: {
         ...clipData,
         startOffset: splitTime
       }
     };
 
-    // Update nodes
     setNodes(nds => nds.filter(n => n.id !== activeNodeId).concat([leftNode, rightNode]));
-
-    // Attempt to reconnect edges (simplified: just disconnect for now as re-linking is complex without knowing topology)
-    // In a real implementation, we'd find incoming edges to original and point to leftNode,
-    // and outgoing edges from original and point from rightNode.
-    // Then connect leftNode -> rightNode.
 
     const incoming = edges.filter(e => e.target === activeNodeId);
     const outgoing = edges.filter(e => e.source === activeNodeId);
-
     const newEdges: Edge[] = [];
 
-    // Connect incoming to leftNode
     incoming.forEach(e => {
       newEdges.push({ ...e, id: crypto.randomUUID(), target: leftNode.id });
     });
 
-    // Connect rightNode to outgoing
     outgoing.forEach(e => {
       newEdges.push({ ...e, id: crypto.randomUUID(), source: rightNode.id });
     });
 
-    // Connect leftNode to rightNode
     newEdges.push({
       id: crypto.randomUUID(),
       source: leftNode.id,
@@ -549,8 +679,6 @@ function EditorApp() {
     });
 
     setEdges(eds => eds.filter(e => e.source !== activeNodeId && e.target !== activeNodeId).concat(newEdges));
-
-    // Select the right node (standard editor behavior)
     setActiveNodeId(rightNode.id);
   };
 
@@ -565,61 +693,22 @@ function EditorApp() {
       <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
         <TopBar
           activeNode={getActiveNodeData()}
-          onSave={handleSaveGraph}
-          isSaving={isSavingGraph}
-          isSaved={graphSaved}
+          onOpenUploadModal={handleUploadClick}
           isLibraryVisible={isLibraryVisible}
           toggleLibrary={() => setIsLibraryVisible(!isLibraryVisible)}
           handleExport={handleExport}
+          onSave={handleSaveProject}
+          isSaving={isSaving}
+          lastSaved={lastSaved}
         />
 
         <div className="flex flex-1 overflow-hidden">
-          {isLibraryVisible && (
-            <aside className="w-[300px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0 transition-all">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] text-slate-500 font-bold uppercase">Project Assets</span>
-                <Button onClick={handleUploadClick} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500">+ Add</Button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-                {activeTab === 'media' ? (
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-[10px] text-slate-500 font-bold uppercase">Project Assets</span>
-                      <Button onClick={handleUploadClick} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500">+ Add</Button>
-                    </div>
-                    {libraryAssets.map(asset => (
-                      <div key={asset.name} draggable onDragStart={(e) => onDragStart(e, 'asset', asset)} className="group flex gap-3 p-2 rounded-lg bg-[#151515] border border-white/5 hover:border-yellow-500/50 cursor-grab hover:bg-[#1a1a1a] transition-all">
-                        <div className="w-16 h-10 bg-black rounded overflow-hidden shrink-0">
-                          {asset.thumbnailUrl ? <img src={`http://localhost:3001${asset.thumbnailUrl}`} className="w-full h-full object-cover" /> : null}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium text-slate-200 truncate">{asset.name}</div>
-                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">{asset.duration ? formatTime(asset.duration) : 'UNK'}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Process Nodes</div>
-                    <div draggable onDragStart={(e) => onDragStart(e, 'node-output', {})} className="p-3 bg-[#151515] border border-purple-500/30 rounded-xl cursor-grab hover:bg-[#1a1a1a] hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.2)] transition-all group">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold text-lg">
-                          <FlaskConical size={18} />
-                        </div>
-                        <div>
-                          <div className="text-sm font-bold text-slate-200 group-hover:text-purple-400 transition-colors">Output Node</div>
-                          <div className="text-[10px] text-slate-500">Render & Preview</div>
-                        </div>
-                      </div>
-                      <div className="text-[10px] text-slate-500 pl-11">Stitches connected clips into a single video file.</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
-          )}
+          <LibraryPanel 
+            assets={libraryAssets} 
+            onOpenUploadModal={handleUploadClick} 
+            onDragStart={onDragStart} 
+            isVisible={isLibraryVisible} 
+          />
 
           <div className="flex-1 relative h-full bg-[#050505] shadow-inner" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
             <ReactFlow

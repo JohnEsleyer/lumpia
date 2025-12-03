@@ -1,4 +1,3 @@
-// server/routes.ts
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import fs from 'fs/promises';
@@ -12,8 +11,8 @@ import {
     deleteProject,
     addAsset,
     getProjectAssets,
-    deleteProjectAsset, // Import this
-    updateProject
+    deleteProjectAsset,
+    updateProject // Import this
 } from './projectManager';
 import { processOperation } from './processor';
 import { transcribeVideo } from './transcriber';
@@ -33,16 +32,14 @@ const TEMP_UPLOAD_DIR = path.join(__dirname, 'uploads_temp');
 const upload = multer({ dest: TEMP_UPLOAD_DIR });
 
 // ... (Other routes: POST /, GET /, GET /:id, DELETE /:id remain the same) ...
-projectRouter.patch('/:id', async (req: Request, res: Response) => {
+projectRouter.post('/', upload.single('file'), async (req: Request, res: Response) => {
     try {
-        const updated = await updateProject(req.params.id, req.body);
-        res.json(updated);
+        const project = await createProject(req.body as CreateProjectDTO, req.file);
+        res.json(project);
     } catch (error: any) {
-        console.error("Update error:", error);
         res.status(500).json({ error: error.message });
     }
 });
-
 
 projectRouter.get('/', async (_req: Request, res: Response) => {
     try {
@@ -58,6 +55,16 @@ projectRouter.get('/:id', async (req: Request, res: Response) => {
         const project = await getProject(req.params.id);
         if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
         res.json(project);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// NEW: Update Project Route
+projectRouter.put('/:id', async (req: Request, res: Response) => {
+    try {
+        const updatedProject = await updateProject(req.params.id, req.body);
+        res.json(updatedProject);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

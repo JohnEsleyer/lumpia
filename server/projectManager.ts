@@ -1,4 +1,3 @@
-// server/projectManager.ts
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -76,6 +75,18 @@ export async function getProject(id: string): Promise<Project | null> {
 async function saveProjectState(id: string, state: Project): Promise<void> {
     const statePath = path.join(PROJECTS_DIR, id, 'state.json');
     await fs.writeFile(statePath, JSON.stringify(state, null, 2));
+}
+
+/**
+ * Updates an existing project with new data (shallow merge).
+ */
+export async function updateProject(id: string, updates: Partial<Project>): Promise<Project> {
+    const project = await getProject(id);
+    if (!project) throw new Error('Project not found');
+
+    const updatedProject = { ...project, ...updates };
+    await saveProjectState(id, updatedProject);
+    return updatedProject;
 }
 
 /**
@@ -356,16 +367,4 @@ export async function deleteProjectAsset(projectId: string, assetName: string): 
     // 4. Update Project State
     project.assets = project.assets.filter(a => a !== assetName);
     await saveProjectState(projectId, project);
-}
-
-/**
- * Updates specific fields of an existing project.
- */
-export async function updateProject(id: string, updates: Partial<Project>): Promise<Project> {
-    const project = await getProject(id);
-    if (!project) throw new Error('Project not found');
-
-    const updatedProject = { ...project, ...updates };
-    await saveProjectState(id, updatedProject);
-    return updatedProject;
 }

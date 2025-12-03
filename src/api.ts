@@ -14,6 +14,16 @@ export async function getProject(id: string): Promise<Project> {
     return res.json();
 }
 
+export async function updateProject(id: string, data: Partial<Project>): Promise<Project> {
+    const res = await fetch(`${API_BASE}/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update project');
+    return res.json();
+}
+
 export async function getProjectAssets(id: string): Promise<ProjectAsset[]> {
     const res = await fetch(`${API_BASE}/${id}/assets`);
     if (!res.ok) throw new Error('Failed to fetch assets');
@@ -97,15 +107,5 @@ export async function renderSequence(projectId: string, clips: { url: string; st
         body: JSON.stringify({ clips }),
     });
     if (!res.ok) throw new Error('Failed to render sequence');
-    return res.json();
-}
-
-export async function updateProject(id: string, data: Partial<Project>): Promise<Project> {
-    const res = await fetch(`${API_BASE}/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error('Failed to update project');
     return res.json();
 }
