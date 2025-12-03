@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
+import { Handle, Position, type NodeProps, type Node, useReactFlow } from '@xyflow/react';
 import { Button } from '../../components/ui/Button';
+import { X } from 'lucide-react';
 
 // We define the specific data shape for an Output Node
 export type OutputNodeData = {
@@ -13,15 +14,31 @@ export type OutputNodeData = {
 export type OutputNodeType = Node<OutputNodeData>;
 
 export const OutputNode = ({ id, data, selected }: NodeProps<OutputNodeType>) => {
+    const { setNodes } = useReactFlow();
+
+    const handleDelete = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+    };
+
     return (
         <div className={`
             relative w-[280px] bg-[#1a1a1a] rounded-xl border-2 transition-all duration-300 flex flex-col overflow-hidden shadow-2xl
             ${selected ? 'border-purple-500 shadow-[0_0_30px_rgba(168,85,247,0.3)]' : 'border-slate-800 hover:border-slate-600'}
         `}>
             {/* Header */}
-            <div className="bg-gradient-to-r from-purple-900/50 to-slate-900 p-3 border-b border-white/5 flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.5)] animate-pulse" />
-                <span className="font-bold text-slate-200 text-sm tracking-wide">Output / Render</span>
+            <div className="bg-gradient-to-r from-purple-900/50 to-slate-900 p-3 border-b border-white/5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.5)] animate-pulse" />
+                    <span className="font-bold text-slate-200 text-sm tracking-wide">Output / Render</span>
+                </div>
+                <button
+                    onClick={handleDelete}
+                    className="text-slate-500 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-white/5"
+                    title="Delete Node"
+                >
+                    <X size={14} />
+                </button>
             </div>
 
             {/* Body */}

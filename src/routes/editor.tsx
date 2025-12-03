@@ -81,7 +81,10 @@ const formatTime = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}.${ms}`;
 };
 
-const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
+import { X } from 'lucide-react';
+
+const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
+  const { setNodes } = useReactFlow();
   const duration = data.endOffset - data.startOffset;
 
   const thumbnails = useMemo(() => {
@@ -89,6 +92,11 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
     if (data.thumbnailUrl) return [data.thumbnailUrl];
     return [];
   }, [data.filmstrip, data.thumbnailUrl]);
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setNodes((nodes) => nodes.filter((node) => node.id !== id));
+  };
 
   return (
     <div className="relative group w-[300px]">
@@ -99,7 +107,16 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
             <div className="w-2 h-2 rounded-full bg-yellow-500/50" />
             <span className="text-xs font-medium text-slate-300 truncate max-w-[180px]">{data.label}</span>
           </div>
-          <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
+            <button
+              onClick={handleDelete}
+              className="text-slate-500 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-white/5"
+              title="Delete Clip"
+            >
+              <X size={12} />
+            </button>
+          </div>
         </div>
         <div className="h-24 bg-[#000] relative flex overflow-hidden">
           {thumbnails.length > 0 ? (
@@ -124,6 +141,7 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
       <Handle type="source" position={Position.Right} className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-right-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50" />
     </div>
   );
+
 };
 
 const nodeTypes = { clip: FilmstripNode, output: OutputNode };
