@@ -39,6 +39,7 @@ import { Button } from '../components/ui/Button';
 import { useFFmpeg } from '../hooks/useFFmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import { OutputNode, type OutputNodeType } from '../remotion/nodes/OutputNode';
+import ButtonEdge from '../remotion/edges/ButtonEdge';
 
 export const Route = createFileRoute('/editor')({
   component: () => (
@@ -126,6 +127,7 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
 };
 
 const nodeTypes = { clip: FilmstripNode, output: OutputNode };
+const edgeTypes = { 'button-edge': ButtonEdge };
 
 // TopBar
 const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary, handleExport }: any) => (
@@ -478,6 +480,7 @@ function EditorApp() {
       id: crypto.randomUUID(),
       source: leftNode.id,
       target: rightNode.id,
+      type: 'button-edge',
       animated: true,
       style: { stroke: '#eab308', strokeWidth: 2 }
     });
@@ -554,7 +557,17 @@ function EditorApp() {
           )}
 
           <div className="flex-1 relative h-full bg-[#050505] shadow-inner" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
-            <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} nodeTypes={nodeTypes} onConnect={(params) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#eab308', strokeWidth: 2 } }, eds))} fitView minZoom={0.1}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onConnect={(params) => setEdges((eds) => addEdge({ ...params, type: 'button-edge', animated: true, style: { stroke: '#eab308', strokeWidth: 2 } }, eds))}
+              fitView
+              minZoom={0.1}
+            >
               <Background color="#222" gap={24} size={1} />
               <Panel position="bottom-center" className="bg-[#1a1a1a] px-4 py-2 rounded-full border border-white/10 shadow-xl mb-4 text-xs text-slate-400">Graph Editor</Panel>
             </ReactFlow>
