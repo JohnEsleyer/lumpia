@@ -154,6 +154,64 @@ const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary
 const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded }) => isOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">Modal Stub</div> : null;
 const ExportLoadingModal = ({ isOpen }: { isOpen: boolean }) => null;
 
+// ProgressBar Component
+const ProgressBar = ({ currentTime, duration, onSeek }: { currentTime: number, duration: number, onSeek: (time: number) => void }) => {
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const calculateTime = (e: React.MouseEvent | MouseEvent) => {
+    if (!progressBarRef.current || duration === 0) return 0;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const percentage = x / rect.width;
+    return percentage * duration;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    onSeek(calculateTime(e));
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        onSeek(calculateTime(e));
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, duration, onSeek]);
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div
+      ref={progressBarRef}
+      className="absolute top-0 left-0 right-0 h-1 bg-white/10 cursor-pointer group hover:h-2 transition-all z-30"
+      onMouseDown={handleMouseDown}
+    >
+      <div
+        className="h-full bg-yellow-500 relative"
+        style={{ width: `${progress}%` }}
+      >
+        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg scale-0 group-hover:scale-100 transition-transform" />
+      </div>
+    </div>
+  );
+};
+
 function EditorApp() {
   const { projectId } = Route.useSearch();
   const { screenToFlowPosition, getNodes, getEdges } = useReactFlow();
@@ -351,6 +409,13 @@ function EditorApp() {
     }
   };
 
+  const handleSeek = (time: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
   const handleSplit = () => {
     if (!activeNodeId) return;
     const node = nodes.find(n => n.id === activeNodeId);
@@ -512,7 +577,8 @@ function EditorApp() {
             </div>
 
             {/* Player Controls */}
-            <div className="h-16 bg-[#0a0a0a] border-t border-white/5 px-4 flex items-center justify-between shrink-0">
+            <div className="h-16 bg-[#0a0a0a] border-t border-white/5 px-4 flex items-center justify-between shrink-0 relative">
+              <ProgressBar currentTime={currentTime} duration={duration} onSeek={handleSeek} />
               <div className="flex items-center gap-2">
                 <Button onClick={handlePlayPause} className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all">
                   {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
