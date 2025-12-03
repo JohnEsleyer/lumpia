@@ -107,6 +107,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
         } else if (operation.type === 'stitch') {
             const clips = operation.params.clips || [];
             const audioClips = operation.params.audioClips || [];
+            const globalMix = operation.params.globalMix || { videoMixGain: 1.0, audioMixGain: 1.0 };
 
             // If no clips, nothing to render
             if (!clips.length) {
@@ -131,6 +132,16 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     let duration = clip.end - clip.start;
                     if (duration < 0.1) duration = 0.1;
 
+                    // Apply Filters: Speed & Volume
+                    const speed = clip.playbackRate || 1.0;
+                    const volume = clip.volume !== undefined ? clip.volume : 1.0;
+
+                    // FFmpeg setpts filter for speed (inverse relationship: 2x speed = 0.5*PTS)
+                    const videoFilter = `setpts=${1 / speed}*PTS`;
+                    // FFmpeg atempo filter for audio speed (limited to 0.5 to 2.0 range per pass, chaining needed for more but keeping simple)
+                    // Also applying volume filter
+                    const audioFilter = `atempo=${speed},volume=${volume}`;
+
                     // Trim and Normalize (important for concatenation)
                     await new Promise<void>((res, rej) => {
                         ffmpeg(inputPath)
@@ -138,7 +149,9 @@ export async function processOperation(project: Project, operation: ProjectOpera
                             .setDuration(duration)
                             .outputOptions([
                                 '-c:v libx264', '-preset ultrafast', '-crf 23', // Standardize video
-                                '-c:a aac', '-ar 44100', '-ac 2'                // Standardize audio
+                                '-c:a aac', '-ar 44100', '-ac 2',               // Standardize audio
+                                `-filter:v ${videoFilter}`,
+                                `-filter:a ${audioFilter}`
                             ])
                             .output(tempPath)
                             .on('end', () => res())
@@ -175,12 +188,17 @@ export async function processOperation(project: Project, operation: ProjectOpera
                         let duration = clip.end - clip.start;
                         if (duration < 0.1) duration = 0.1;
 
+                        const volume = clip.volume !== undefined ? clip.volume : 1.0;
+
                         // Trim and Normalize Audio
                         await new Promise<void>((res, rej) => {
                             ffmpeg(inputPath)
                                 .setStartTime(clip.start)
                                 .setDuration(duration)
-                                .outputOptions(['-c:a libmp3lame', '-ar 44100', '-ac 2'])
+                                .outputOptions([
+                                    '-c:a libmp3lame', '-ar 44100', '-ac 2',
+                                    `-filter:a volume=${volume}`
+                                ])
                                 .output(tempPath)
                                 .on('end', () => res())
                                 .on('error', rej)
@@ -216,16 +234,37 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
                 // Scenario 1: Video only (No audio clips added)
                 if (!audioTrackPath) {
-                    await new Promise<void>((res, rej) => {
-                        ffmpeg()
-                            .input(videoListFile)
-                            .inputOptions(['-f concat', '-safe 0'])
-                            .outputOptions(['-c copy']) // Fast stream copy
-                            .output(absoluteOutputPath)
-                            .on('end', () => res())
-                            .on('error', rej)
-                            .run();
-                    });
+                    // Even if no external audio, we might want to apply the global video mix gain
+                    // But 'copy' is faster if gain is 1.0. If gain != 1.0, we need to re-encode audio.
+                    // For simplicity, let's re-encode if gain is not 1.0, else copy.
+
+                    if (globalMix.videoMixGain !== 1.0) {
+                        await new Promise<void>((res, rej) => {
+                            ffmpeg()
+                                .input(videoListFile)
+                                .inputOptions(['-f concat', '-safe 0'])
+                                .outputOptions([
+                                    '-c:v copy',
+                                    '-c:a aac', '-b:a 192k',
+                                    `-filter:a volume=${globalMix.videoMixGain}`
+                                ])
+                                .output(absoluteOutputPath)
+                                .on('end', () => res())
+                                .on('error', rej)
+                                .run();
+                        });
+                    } else {
+                        await new Promise<void>((res, rej) => {
+                            ffmpeg()
+                                .input(videoListFile)
+                                .inputOptions(['-f concat', '-safe 0'])
+                                .outputOptions(['-c copy']) // Fast stream copy
+                                .output(absoluteOutputPath)
+                                .on('end', () => res())
+                                .on('error', rej)
+                                .run();
+                        });
+                    }
                 }
                 // Scenario 2: Video + Audio Mixing
                 else {
@@ -245,15 +284,19 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     });
 
                     // 2. Mix the concatenated video with the concatenated audio
-                    // We use 'amix' to blend the video's existing audio with the new audio track
-                    // duration=first ensures the output is as long as the video (cuts audio if too long)
+                    // Apply Global Gains here
+                    const vGain = globalMix.videoMixGain ?? 1.0;
+                    const aGain = globalMix.audioMixGain ?? 1.0;
+
                     await new Promise<void>((res, rej) => {
                         ffmpeg()
                             .input(concatenatedVideoPath) // Input 0
                             .input(audioTrackPath!)       // Input 1
                             .complexFilter([
-                                // Mix input 0 audio and input 1 audio into [aout]
-                                '[0:a][1:a]amix=inputs=2:duration=first[aout]'
+                                // Apply volume to each input first, then mix
+                                `[0:a]volume=${vGain}[a0]`,
+                                `[1:a]volume=${aGain}[a1]`,
+                                `[a0][a1]amix=inputs=2:duration=first[aout]`
                             ])
                             .outputOptions([
                                 '-c:v copy',       // Copy video stream (no re-encoding)

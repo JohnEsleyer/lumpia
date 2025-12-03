@@ -33,6 +33,13 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({
         }
     }, [data.url]);
 
+    // Apply volume from data
+    useEffect(() => {
+        if (audioRef.current) {
+            audioRef.current.volume = data.volume !== undefined ? data.volume : 1.0;
+        }
+    }, [data.volume]);
+
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -52,7 +59,8 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({
                     url: `http://localhost:3001${asset.url}`,
                     duration: asset.duration || 0,
                     startOffset: 0,
-                    endOffset: asset.duration || 10
+                    endOffset: asset.duration || 10,
+                    volume: 1.0 // Default volume
                 });
             }
         } catch (err) {
@@ -87,6 +95,11 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({
             audioRef.current.currentTime = time;
             setCurrentTime(time);
         }
+    };
+
+    const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const vol = parseFloat(e.target.value);
+        onUpdateNode(nodeId, { volume: vol });
     };
 
     const formatTime = (s: number) => {
@@ -199,13 +212,30 @@ export const AudioInspector: React.FC<AudioInspectorProps> = ({
                     />
                 </div>
 
+                {/* Volume Control */}
+                <div className="flex items-center gap-3 bg-white/5 p-3 rounded-lg border border-white/5">
+                    <Volume2 size={16} className="text-slate-400" />
+                    <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={data.volume !== undefined ? data.volume : 1.0}
+                        onChange={handleVolumeChange}
+                        className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500 hover:accent-emerald-400"
+                    />
+                    <span className="text-[10px] font-mono text-slate-400 w-8 text-right">
+                        {Math.round((data.volume !== undefined ? data.volume : 1.0) * 100)}%
+                    </span>
+                </div>
+
                 <div className="grid grid-cols-3 gap-4 items-center">
                     <div className="flex justify-start">
                         <Button
                             variant="danger"
                             className="p-2 h-8 w-8 rounded-full flex items-center justify-center border-white/5 bg-transparent hover:bg-white/5"
                             title="Remove Audio"
-                            onClick={() => onUpdateNode(nodeId, { url: '', label: 'Empty Audio', duration: 10 })}
+                            onClick={() => onUpdateNode(nodeId, { url: '', label: 'Empty Audio', duration: 10, volume: 1.0 })}
                         >
                             <Trash2 size={14} />
                         </Button>

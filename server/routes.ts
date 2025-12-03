@@ -197,7 +197,7 @@ projectRouter.post('/:id/render', async (req: Request, res: Response) => {
         const project = await getProject(req.params.id);
         if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
 
-        const { clips, audioClips } = req.body; // Extract audioClips
+        const { clips, audioClips, globalMix } = req.body; // Extract audioClips and globalMix
         if (!clips || !Array.isArray(clips) || clips.length === 0) {
             res.status(400).json({ error: 'No clips provided' });
             return;
@@ -208,7 +208,8 @@ projectRouter.post('/:id/render', async (req: Request, res: Response) => {
             type: 'stitch',
             params: {
                 clips,
-                audioClips: audioClips || [] // Pass it through
+                audioClips: audioClips || [], // Pass it through
+                globalMix: globalMix || { videoMixGain: 1.0, audioMixGain: 1.0 }
             },
             id: `temp_render_${Date.now()}`
         };

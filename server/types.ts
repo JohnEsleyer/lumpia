@@ -5,6 +5,8 @@ export interface ProjectOperation {
     type: 'trim' | 'text' | 'stitch' | 'subtitle' | 'overlay';
     params: any;
     id: string;
+    status?: 'pending' | 'completed' | 'failed';
+    result?: string;
 }
 
 export interface Project {

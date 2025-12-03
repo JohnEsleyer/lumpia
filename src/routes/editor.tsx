@@ -18,7 +18,6 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
-  Scissors,
   Download,
   ChevronLeft,
   ChevronRight,
@@ -31,6 +30,7 @@ import {
   FileAudio,
   Music
 } from 'lucide-react';
+import React from 'react';
 
 import { getProject, getProjectAssets, updateProject, addAsset } from '../api';
 import type { Project } from '../types';
@@ -110,7 +110,11 @@ const getSequenceFromHandle = (
         // @ts-ignore
         end: sourceNode.data.endOffset || sourceNode.data.duration || 0,
         // @ts-ignore
-        label: sourceNode.data.label
+        label: sourceNode.data.label,
+        // @ts-ignore
+        volume: sourceNode.data.volume ?? 1.0,
+        // @ts-ignore
+        playbackRate: sourceNode.data.playbackRate ?? 1.0
       });
 
       // Find next edge (assuming linear chain for simplicity)
@@ -368,20 +372,38 @@ function EditorApp() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  // --- MISSING FUNCTION: updateNodeData ---
+  const updateNodeData = useCallback((id: string, data: any) => {
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id === id) {
+          return {
+            ...node,
+            data: { ...node.data, ...data },
+          };
+        }
+        return node;
+      })
+    );
+  }, [setNodes]);
+
   // --- Processing Logic (Stitching) ---
   const handleProcessOutput = useCallback(async (nodeId: string) => {
     if (!projectId) return;
 
     // Set processing flag
-    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isProcessing: true } } : n));
+    updateNodeData(nodeId, { isProcessing: true });
 
     try {
-      // NOTE: We get the *latest* nodes/edges from state setter to avoid closure staleness if possible, 
-      // but in this callback, we trust the internal React Flow instance or state passed.
-      // Better to use getNodes()/getEdges() from hook if available, or current state.
-      // But getNodes/getEdges from useReactFlow() is safe.
       const currentNodes = getNodes();
       const currentEdges = getEdges();
+
+      // Get Output Node Data for Global Mix Settings
+      const outputNode = currentNodes.find(n => n.id === nodeId);
+      // @ts-ignore
+      const videoMixGain = outputNode?.data?.videoMixGain ?? 1.0;
+      // @ts-ignore
+      const audioMixGain = outputNode?.data?.audioMixGain ?? 1.0;
 
       const videoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
       const audioClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'audio-in', 'audio');
@@ -391,23 +413,101 @@ function EditorApp() {
       const response = await fetch(`http://localhost:3001/api/projects/${projectId}/render`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clips: videoClips, audioClips }),
+        body: JSON.stringify({
+          clips: videoClips,
+          audioClips,
+          globalMix: { videoMixGain, audioMixGain }
+        }),
       });
 
       if (!response.ok) throw new Error('Render request failed');
-      const result = await response.json();
+      const responseData = await response.json(); // Get response data for operationId
 
-      setNodes(nds => nds.map(n => n.id === nodeId ? {
-        ...n,
-        data: { ...n.data, isProcessing: false, processedUrl: result.url }
-      } : n));
+      // Poll for completion
+      const pollInterval = setInterval(async () => {
+        const p = await getProject(projectId);
+        const op = p.operations.find(o => o.id === responseData.operationId);
 
-    } catch (e: any) {
-      console.error("Processing failed", e);
-      alert(`Processing failed: ${e.message}`);
-      setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isProcessing: false } } : n));
+        // Fix for "Property 'status' does not exist on type 'ProjectOperation'"
+        // Casting op to any to access dynamic properties returned by server
+        const safeOp = op as any;
+
+        if (safeOp && safeOp.status === 'completed') {
+          clearInterval(pollInterval);
+          updateNodeData(nodeId, { isProcessing: false, processedUrl: safeOp.result });
+        } else if (safeOp && safeOp.status === 'failed') {
+          clearInterval(pollInterval);
+          updateNodeData(nodeId, { isProcessing: false });
+          alert('Rendering Failed');
+        }
+      }, 1000);
+
+    } catch (err: any) {
+      console.error(err);
+      updateNodeData(nodeId, { isProcessing: false });
+      alert("Failed to start processing");
     }
-  }, [projectId, getNodes, getEdges, setNodes]);
+  }, [projectId, getNodes, getEdges, updateNodeData]);
+
+  // --- Fast Preview Logic ---
+  const [previewQueue, setPreviewQueue] = React.useState<any[]>([]);
+  const [currentPreviewIndex, setCurrentPreviewIndex] = React.useState(-1);
+
+  const handleFastPreview = (nodeId: string | undefined) => {
+    if (!nodeId) return;
+    const currentNodes = getNodes();
+    const currentEdges = getEdges();
+    const videoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
+
+    if (videoClips.length === 0) {
+      alert("No clips to preview");
+      return;
+    }
+
+    setPreviewQueue(videoClips);
+    setCurrentPreviewIndex(0);
+
+    // Start playing first clip
+    if (videoRef.current) {
+      videoRef.current.src = videoClips[0].url as string;
+      videoRef.current.currentTime = videoClips[0].start as number;
+      videoRef.current.play();
+    }
+  };
+
+  // Handle Preview Queue Progression
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleTimeUpdate = () => {
+      if (currentPreviewIndex >= 0 && currentPreviewIndex < previewQueue.length) {
+        const clip = previewQueue[currentPreviewIndex];
+        const end = clip.end; // Duration or end offset
+
+        // Check if we reached the end of the clip segment
+        if (video.currentTime >= end) {
+          const nextIndex = currentPreviewIndex + 1;
+          if (nextIndex < previewQueue.length) {
+            // Play next clip
+            setCurrentPreviewIndex(nextIndex);
+            const nextClip = previewQueue[nextIndex];
+            video.src = nextClip.url as string;
+            video.currentTime = nextClip.start as number;
+            video.play();
+          } else {
+            // End of queue
+            setPreviewQueue([]);
+            setCurrentPreviewIndex(-1);
+            video.pause();
+          }
+        }
+      }
+    };
+
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+  }, [previewQueue, currentPreviewIndex]);
 
   // --- Hydration (Load Project) ---
   useEffect(() => {
@@ -436,10 +536,6 @@ function EditorApp() {
   }, [projectId, handleProcessOutput, setNodes, setEdges]);
 
   // --- Helpers ---
-  const updateNodeData = useCallback((nodeId: string, newData: any) => {
-    setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n)));
-  }, [setNodes]);
-
   const getActiveNode = useCallback(() => {
     if (!activeNodeId) return null;
     return nodes.find(n => n.id === activeNodeId) || null;
@@ -605,14 +701,18 @@ function EditorApp() {
 
             // 2. Video Inspector (Unified for Clips, Outputs, and General Preview)
             let videoSrc = '';
+            let activeNodeType: 'clip' | 'output' | 'audio' | 'default' = 'default';
 
-            // Logic to determine what to play
             if (activeNode?.type === 'output') {
+              activeNodeType = 'output';
               // @ts-ignore
               if (activeNode.data.processedUrl) videoSrc = `http://localhost:3001${activeNode.data.processedUrl}`;
             } else if (activeNode?.type === 'clip') {
+              activeNodeType = 'clip';
               // @ts-ignore
               videoSrc = activeNode.data.url;
+            } else if (activeNode?.type === 'audio') {
+              activeNodeType = 'audio';
             } else if (videoRef.current) {
               // Preserve current playback if Deselecting
               videoSrc = videoRef.current.src;
@@ -626,11 +726,22 @@ function EditorApp() {
                 currentTime={currentTime}
                 duration={duration}
                 activeNodeId={activeNodeId}
+                activeNodeType={activeNodeType}
+                data={activeNode?.data}
+                onUpdateNode={updateNodeData}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSplit={handleSplit}
                 onTimeUpdate={() => { if (videoRef.current) setCurrentTime(videoRef.current.currentTime); }}
                 onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
+                // Output Props
+                // @ts-ignore
+                isProcessing={activeNode?.data?.isProcessing}
+                // @ts-ignore
+                processedUrl={activeNode?.data?.processedUrl}
+                // @ts-ignore
+                onProcess={() => activeNode?.id && handleProcessOutput(activeNode.id)}
+                onFastPreview={() => handleFastPreview(activeNode?.id)}
               />
             );
           })()}
