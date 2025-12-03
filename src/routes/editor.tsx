@@ -30,10 +30,11 @@ import {
   Film,
   FlaskConical,
   Loader2,
-  MonitorPlay
+  MonitorPlay,
+  Save
 } from 'lucide-react';
 
-import { getProject, getProjectAssets, addAsset, deleteAsset, exportProject, renderSequence } from '../api';
+import { getProject, getProjectAssets, addAsset, deleteAsset, exportProject, renderSequence, updateProject } from '../api';
 import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
 import { useFFmpeg } from '../hooks/useFFmpeg';
@@ -148,7 +149,7 @@ const nodeTypes = { clip: FilmstripNode, output: OutputNode };
 const edgeTypes = { 'button-edge': ButtonEdge };
 
 // TopBar
-const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary, handleExport }: any) => (
+const TopBar = ({ activeNode, onSave, isSaving, isSaved, isLibraryVisible, toggleLibrary, handleExport }: any) => (
   <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
     <div className="flex items-center gap-4">
       <Button onClick={toggleLibrary} className={`p-2 rounded-md transition-colors ${isLibraryVisible ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}>
@@ -160,8 +161,15 @@ const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary
     </div>
 
     <div className="flex items-center gap-3">
-      <Button onClick={onOpenUploadModal} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 flex items-center gap-2">
-        <Plus size={14} /> Asset
+      {/* Small Saved Text Indicator */}
+      {isSaved && (
+        <span className="text-xs font-bold text-emerald-500 animate-in fade-in slide-in-from-right-2 duration-300 mr-1">
+          Saved
+        </span>
+      )}
+
+      <Button onClick={onSave} disabled={isSaving} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20 flex items-center gap-2">
+        <Save size={14} /> {isSaving ? 'Saving...' : 'Save Graph'}
       </Button>
       <Button onClick={handleExport} className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400 flex items-center gap-2">
         <Download size={14} /> Export
@@ -172,7 +180,6 @@ const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary
 
 // Modals
 const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded }) => isOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">Modal Stub</div> : null;
-const ExportLoadingModal = ({ isOpen }: { isOpen: boolean }) => null;
 
 // ProgressBar Component
 const ProgressBar = ({ currentTime, duration, onSeek }: { currentTime: number, duration: number, onSeek: (time: number) => void }) => {
@@ -253,6 +260,9 @@ function EditorApp() {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isSavingGraph, setIsSavingGraph] = useState(false); // Add state for saving
+  const [graphSaved, setGraphSaved] = useState(false); // 2. Add state for success message
+
 
   // Handle Node Selection & Preview
   useOnSelectionChange({
@@ -409,12 +419,47 @@ function EditorApp() {
       setIsLoadingProject(true);
       getProject(projectId).then(async (p) => {
         setProject(p);
+
+        // RESTORE STATE
+        if (p.editorState) {
+          setNodes(p.editorState.nodes || []);
+          setEdges(p.editorState.edges || []);
+        }
+
         const assets = await getProjectAssets(projectId);
         setLibraryAssets(assets);
         setIsLoadingProject(false);
       }).catch(console.error);
     }
-  }, [projectId]);
+  }, [projectId, setNodes, setEdges]);
+
+  const handleSaveGraph = async () => {
+    if (!projectId) return;
+    setIsSavingGraph(true);
+    setGraphSaved(false); // Reset status
+    try {
+      const currentNodes = getNodes();
+      const currentEdges = getEdges();
+
+      await updateProject(projectId, {
+        editorState: {
+          nodes: currentNodes,
+          edges: currentEdges
+        }
+      });
+
+      // Trigger success state
+      setGraphSaved(true);
+      // Hide message after 2 seconds
+      setTimeout(() => setGraphSaved(false), 2000);
+
+    } catch (e) {
+      console.error("Failed to save graph", e);
+      alert("Failed to save workspace");
+    } finally {
+      setIsSavingGraph(false);
+    }
+  };
 
   // Player Controls
   const handlePlayPause = () => {
@@ -520,7 +565,9 @@ function EditorApp() {
       <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
         <TopBar
           activeNode={getActiveNodeData()}
-          onOpenUploadModal={handleUploadClick}
+          onSave={handleSaveGraph}
+          isSaving={isSavingGraph}
+          isSaved={graphSaved}
           isLibraryVisible={isLibraryVisible}
           toggleLibrary={() => setIsLibraryVisible(!isLibraryVisible)}
           handleExport={handleExport}
@@ -529,9 +576,9 @@ function EditorApp() {
         <div className="flex flex-1 overflow-hidden">
           {isLibraryVisible && (
             <aside className="w-[300px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0 transition-all">
-              <div className="flex border-b border-white/5">
-                <button onClick={() => setActiveTab('media')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'media' ? 'border-yellow-500 text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Media</button>
-                <button onClick={() => setActiveTab('nodes')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'nodes' ? 'border-purple-500 text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Nodes</button>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-[10px] text-slate-500 font-bold uppercase">Project Assets</span>
+                <Button onClick={handleUploadClick} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500">+ Add</Button>
               </div>
 
               <div className="flex-1 overflow-y-auto custom-scrollbar p-4">

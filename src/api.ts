@@ -99,3 +99,13 @@ export async function renderSequence(projectId: string, clips: { url: string; st
     if (!res.ok) throw new Error('Failed to render sequence');
     return res.json();
 }
+
+export async function updateProject(id: string, data: Partial<Project>): Promise<Project> {
+    const res = await fetch(`${API_BASE}/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update project');
+    return res.json();
+}

@@ -357,3 +357,15 @@ export async function deleteProjectAsset(projectId: string, assetName: string): 
     project.assets = project.assets.filter(a => a !== assetName);
     await saveProjectState(projectId, project);
 }
+
+/**
+ * Updates specific fields of an existing project.
+ */
+export async function updateProject(id: string, updates: Partial<Project>): Promise<Project> {
+    const project = await getProject(id);
+    if (!project) throw new Error('Project not found');
+
+    const updatedProject = { ...project, ...updates };
+    await saveProjectState(id, updatedProject);
+    return updatedProject;
+}

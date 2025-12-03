@@ -12,7 +12,8 @@ import {
     deleteProject,
     addAsset,
     getProjectAssets,
-    deleteProjectAsset // Import this
+    deleteProjectAsset, // Import this
+    updateProject
 } from './projectManager';
 import { processOperation } from './processor';
 import { transcribeVideo } from './transcriber';
@@ -32,14 +33,16 @@ const TEMP_UPLOAD_DIR = path.join(__dirname, 'uploads_temp');
 const upload = multer({ dest: TEMP_UPLOAD_DIR });
 
 // ... (Other routes: POST /, GET /, GET /:id, DELETE /:id remain the same) ...
-projectRouter.post('/', upload.single('file'), async (req: Request, res: Response) => {
+projectRouter.patch('/:id', async (req: Request, res: Response) => {
     try {
-        const project = await createProject(req.body as CreateProjectDTO, req.file);
-        res.json(project);
+        const updated = await updateProject(req.params.id, req.body);
+        res.json(updated);
     } catch (error: any) {
+        console.error("Update error:", error);
         res.status(500).json({ error: error.message });
     }
 });
+
 
 projectRouter.get('/', async (_req: Request, res: Response) => {
     try {
