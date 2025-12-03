@@ -1,4 +1,3 @@
-
 import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import fs from 'fs/promises';
@@ -20,45 +19,16 @@ function generateSRT(subtitles: any[]): string {
     }).join('\n');
 }
 
-/**
- * Converts input video to a web-friendly format (H.264/AAC MP4)
- * This ensures playback compatibility in browsers and Remotion.
- */
-export async function standardizeVideo(inputPath: string, outputDir: string): Promise<string> {
-    const filename = path.basename(inputPath, path.extname(inputPath));
-    const outputName = `${filename}_clean.mp4`;
-    const outputPath = path.join(outputDir, outputName);
-
-    console.log(`[Processor] Standardizing video: ${inputPath} -> ${outputPath}`);
-
-    return new Promise((resolve, reject) => {
-        ffmpeg(inputPath)
-            .outputOptions([
-                '-c:v libx264',      // Force H.264 codec
-                '-preset veryfast',  // Fast encoding
-                '-crf 23',           // Good balance of quality/size
-                '-c:a aac',          // Force AAC audio
-                '-b:a 128k',         // Reasonable audio bitrate
-                '-movflags +faststart', // Optimize for web streaming
-                '-pix_fmt yuv420p'   // Ensure compatibility with all players
-            ])
-            .output(outputPath)
-            .on('end', async () => {
-                console.log('[Processor] Standardization complete');
-                resolve(outputName);
-            })
-            .on('error', (err) => {
-                console.error('[Processor] Encoding error:', err);
-                reject(err);
-            })
-            .run();
-    });
-}
-
+// Helper to resolve absolute paths for project files
+const getAbsolutePath = (projectId: string, url: string) => {
+    // URL typically comes in as /projects/{id}/source/{file}
+    // We need to convert that to: .../server/projects/{id}/source/{file}
+    const cleanUrl = url.replace(/^\/projects\//, '');
+    return path.join(__dirname, 'projects', cleanUrl);
+};
 
 export async function processOperation(project: Project, operation: ProjectOperation): Promise<string> {
-    // Stitch operations might not use the currentHead (they might combine multiple assets),
-    // so we skip this check for 'stitch'.
+    // Stitch operations combine multiple assets, so they don't strictly need a 'currentHead'
     if (!project.currentHead && operation.type !== 'stitch') {
         throw new Error("Project has no current video head to process");
     }
@@ -73,10 +43,9 @@ export async function processOperation(project: Project, operation: ProjectOpera
     const outputFileName = `v${project.operations.length + 1}_${operation.type}_${operation.id}.mp4`;
     const absoluteOutputPath = path.join(outputDir, outputFileName);
 
-    // Determine Input Path (for single-file operations)
+    // Determine Input Path (for single-file operations like trim/text)
     let absoluteInputPath = '';
     if (project.currentHead) {
-        // Remove the web prefix /projects/ID/... to get relative path
         const relativePath = project.currentHead.replace(/^\/projects\//, '');
         absoluteInputPath = path.join(__dirname, 'projects', relativePath);
     }
@@ -84,8 +53,11 @@ export async function processOperation(project: Project, operation: ProjectOpera
     console.log(`[Processor] Processing ${operation.type}...`);
 
     return new Promise(async (resolve, reject) => {
+        // Initialize command for single-file operations
+        // (Stitch creates its own specific commands inside its block)
         const command = ffmpeg(absoluteInputPath);
 
+        // --- 1. TRIM OPERATION ---
         if (operation.type === 'trim') {
             const { start, end } = operation.params;
             command.setStartTime(start).setDuration(end - start)
@@ -93,6 +65,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 .on('end', () => resolve(`/projects/${project.id}/artifacts/${outputFileName}`))
                 .on('error', reject).run();
 
+            // --- 2. TEXT OVERLAY OPERATION ---
         } else if (operation.type === 'text') {
             const { text, x, y, fontSize, color } = operation.params;
             // FFmpeg drawtext filter
@@ -102,104 +75,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 .on('end', () => resolve(`/projects/${project.id}/artifacts/${outputFileName}`))
                 .on('error', reject).run();
 
-        } else if (operation.type === 'stitch') {
-            // Params: clips: { url, start, end }[]
-            const clips = operation.params.clips as { url: string; start: number; end: number }[];
-            const tempFiles: string[] = [];
-
-            try {
-                // 1. Process each clip: Trim and Standardize
-                for (let i = 0; i < clips.length; i++) {
-                    const clip = clips[i];
-
-                    // FIX: Decode URI to handle spaces (%20)
-                    const rawFilename = clip.url.split('/').pop() || '';
-                    const filename = decodeURIComponent(rawFilename);
-
-                    if (!filename) throw new Error(`Invalid clip URL: ${clip.url}`);
-
-                    // FIX: Determine if file is in 'source' or 'artifacts'
-                    const isArtifact = clip.url.includes('/artifacts/');
-                    const folder = isArtifact ? 'artifacts' : 'source';
-                    const inputPath = path.join(__dirname, 'projects', project.id, folder, filename);
-
-                    // Verify file exists
-                    try {
-                        await fs.access(inputPath);
-                    } catch {
-                        throw new Error(`File not found on server: ${inputPath}`);
-                    }
-
-                    // Duration safety
-                    let duration = clip.end - clip.start;
-                    if (duration <= 0.1) duration = 0.1;
-
-                    const tempName = `temp_stitch_${i}_${Date.now()}.mp4`;
-                    const tempPath = path.join(outputDir, tempName);
-
-                    // Create a standardized chunk
-                    await new Promise<void>((resolveTrim, rejectTrim) => {
-                        ffmpeg(inputPath)
-                            .setStartTime(clip.start)
-                            .setDuration(duration)
-                            .outputOptions([
-                                '-c:v libx264', '-preset ultrafast', '-crf 23',
-                                '-c:a aac', '-b:a 128k', '-ar 44100' // Normalize audio rate
-                            ])
-                            .output(tempPath)
-                            .on('end', () => resolveTrim())
-                            .on('error', (err) => {
-                                console.error(`[Processor] Clip ${i} failed:`, err);
-                                rejectTrim(err);
-                            })
-                            .run();
-                    });
-                    tempFiles.push(tempPath);
-                }
-
-                // 2. Create concat list file
-                const listFileName = `concat_list_${Date.now()}.txt`;
-                const listPath = path.join(outputDir, listFileName);
-
-                // Escape paths for FFmpeg concat demuxer
-                // Windows paths with backslashes need to be converted to forward slashes or escaped
-                const fileContent = tempFiles
-                    .map(f => `file '${f.replace(/\\/g, '/')}'`)
-                    .join('\n');
-
-                await fs.writeFile(listPath, fileContent);
-
-                // 3. Concatenate
-                await new Promise<void>((resolveConcat, rejectConcat) => {
-                    ffmpeg()
-                        .input(listPath)
-                        .inputOptions(['-f concat', '-safe 0'])
-                        .outputOptions(['-c copy']) // Stream copy for speed (formats already matched)
-                        .output(absoluteOutputPath)
-                        .on('end', () => resolveConcat())
-                        .on('error', (err) => {
-                            console.error("[Processor] Concat failed:", err);
-                            rejectConcat(err);
-                        })
-                        .run();
-                });
-
-                // 4. Cleanup
-                await fs.unlink(listPath).catch(() => { });
-                for (const f of tempFiles) {
-                    await fs.unlink(f).catch(() => { });
-                }
-
-                resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
-
-            } catch (err) {
-                // Cleanup on error
-                for (const f of tempFiles) {
-                    await fs.unlink(f).catch(() => { });
-                }
-                reject(err);
-            }
-
+            // --- 3. SUBTITLE BURN-IN OPERATION ---
         } else if (operation.type === 'subtitle') {
             const { subtitles } = operation.params;
 
@@ -211,7 +87,6 @@ export async function processOperation(project: Project, operation: ProjectOpera
             // 2. Burn subtitles
             // Escape path for Windows filter syntax: C:\Path -> C:/Path and : -> \:
             const srtUrl = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-
             const style = "Fontname=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=20";
 
             command
@@ -227,6 +102,186 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     reject(err);
                 })
                 .run();
+
+            // --- 4. STITCH / RENDER OPERATION (Video + Audio Mixing) ---
+        } else if (operation.type === 'stitch') {
+            const clips = operation.params.clips || [];
+            const audioClips = operation.params.audioClips || [];
+
+            // If no clips, nothing to render
+            if (!clips.length) {
+                return reject(new Error("No video clips provided for stitching"));
+            }
+
+            const tempFiles: string[] = [];
+
+            try {
+                // --- STEP 4A: PROCESS VIDEO CLIPS ---
+                const processedVideoParts: string[] = [];
+
+                for (let i = 0; i < clips.length; i++) {
+                    const clip = clips[i];
+                    const inputPath = getAbsolutePath(project.id, clip.url);
+                    const tempPath = path.join(outputDir, `temp_v_${i}_${Date.now()}.mp4`);
+
+                    // Verify file exists
+                    try { await fs.access(inputPath); }
+                    catch { throw new Error(`Video file not found: ${inputPath}`); }
+
+                    let duration = clip.end - clip.start;
+                    if (duration < 0.1) duration = 0.1;
+
+                    // Trim and Normalize (important for concatenation)
+                    await new Promise<void>((res, rej) => {
+                        ffmpeg(inputPath)
+                            .setStartTime(clip.start)
+                            .setDuration(duration)
+                            .outputOptions([
+                                '-c:v libx264', '-preset ultrafast', '-crf 23', // Standardize video
+                                '-c:a aac', '-ar 44100', '-ac 2'                // Standardize audio
+                            ])
+                            .output(tempPath)
+                            .on('end', () => res())
+                            .on('error', rej)
+                            .run();
+                    });
+
+                    processedVideoParts.push(tempPath);
+                    tempFiles.push(tempPath);
+                }
+
+                // Create Video Concat List
+                const videoListFile = path.join(outputDir, `vid_list_${Date.now()}.txt`);
+                // Use forward slashes for FFmpeg concat file
+                const videoListContent = processedVideoParts.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
+                await fs.writeFile(videoListFile, videoListContent);
+                tempFiles.push(videoListFile);
+
+
+                // --- STEP 4B: PROCESS AUDIO CLIPS (If any) ---
+                let audioTrackPath: string | null = null;
+
+                if (audioClips.length > 0) {
+                    const processedAudioParts: string[] = [];
+
+                    for (let i = 0; i < audioClips.length; i++) {
+                        const clip = audioClips[i];
+                        const inputPath = getAbsolutePath(project.id, clip.url);
+                        const tempPath = path.join(outputDir, `temp_a_${i}_${Date.now()}.mp3`);
+
+                        try { await fs.access(inputPath); }
+                        catch { throw new Error(`Audio file not found: ${inputPath}`); }
+
+                        let duration = clip.end - clip.start;
+                        if (duration < 0.1) duration = 0.1;
+
+                        // Trim and Normalize Audio
+                        await new Promise<void>((res, rej) => {
+                            ffmpeg(inputPath)
+                                .setStartTime(clip.start)
+                                .setDuration(duration)
+                                .outputOptions(['-c:a libmp3lame', '-ar 44100', '-ac 2'])
+                                .output(tempPath)
+                                .on('end', () => res())
+                                .on('error', rej)
+                                .run();
+                        });
+
+                        processedAudioParts.push(tempPath);
+                        tempFiles.push(tempPath);
+                    }
+
+                    // Create Audio Concat List
+                    const audioListFile = path.join(outputDir, `aud_list_${Date.now()}.txt`);
+                    const audioListContent = processedAudioParts.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
+                    await fs.writeFile(audioListFile, audioListContent);
+                    tempFiles.push(audioListFile);
+
+                    // Concat all audio clips into one continuous track
+                    audioTrackPath = path.join(outputDir, `full_audio_track_${Date.now()}.mp3`);
+                    await new Promise<void>((res, rej) => {
+                        ffmpeg()
+                            .input(audioListFile)
+                            .inputOptions(['-f concat', '-safe 0'])
+                            .output(audioTrackPath!)
+                            .on('end', () => res())
+                            .on('error', rej)
+                            .run();
+                    });
+                    tempFiles.push(audioTrackPath);
+                }
+
+
+                // --- STEP 4C: FINAL MIX (Video + Audio) ---
+
+                // Scenario 1: Video only (No audio clips added)
+                if (!audioTrackPath) {
+                    await new Promise<void>((res, rej) => {
+                        ffmpeg()
+                            .input(videoListFile)
+                            .inputOptions(['-f concat', '-safe 0'])
+                            .outputOptions(['-c copy']) // Fast stream copy
+                            .output(absoluteOutputPath)
+                            .on('end', () => res())
+                            .on('error', rej)
+                            .run();
+                    });
+                }
+                // Scenario 2: Video + Audio Mixing
+                else {
+                    // 1. First, concatenate the video sequence to a single temp file
+                    const concatenatedVideoPath = path.join(outputDir, `concat_video_${Date.now()}.mp4`);
+                    tempFiles.push(concatenatedVideoPath);
+
+                    await new Promise<void>((res, rej) => {
+                        ffmpeg()
+                            .input(videoListFile)
+                            .inputOptions(['-f concat', '-safe 0'])
+                            .outputOptions(['-c copy'])
+                            .output(concatenatedVideoPath)
+                            .on('end', () => res())
+                            .on('error', rej)
+                            .run();
+                    });
+
+                    // 2. Mix the concatenated video with the concatenated audio
+                    // We use 'amix' to blend the video's existing audio with the new audio track
+                    // duration=first ensures the output is as long as the video (cuts audio if too long)
+                    await new Promise<void>((res, rej) => {
+                        ffmpeg()
+                            .input(concatenatedVideoPath) // Input 0
+                            .input(audioTrackPath!)       // Input 1
+                            .complexFilter([
+                                // Mix input 0 audio and input 1 audio into [aout]
+                                '[0:a][1:a]amix=inputs=2:duration=first[aout]'
+                            ])
+                            .outputOptions([
+                                '-c:v copy',       // Copy video stream (no re-encoding)
+                                '-map 0:v',        // Map video from input 0
+                                '-map [aout]',     // Map the mixed audio
+                                '-c:a aac',        // Re-encode audio to AAC
+                                '-b:a 192k'
+                            ])
+                            .output(absoluteOutputPath)
+                            .on('end', () => res())
+                            .on('error', rej)
+                            .run();
+                    });
+                }
+
+                // --- STEP 4D: CLEANUP ---
+                // Attempt to delete all temporary files
+                await Promise.allSettled(tempFiles.map(f => fs.unlink(f)));
+
+                resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
+
+            } catch (err) {
+                // Cleanup on error
+                await Promise.allSettled(tempFiles.map(f => fs.unlink(f)));
+                console.error("[Processor] Stitch/Mix failed:", err);
+                reject(err);
+            }
+
         } else {
             reject(new Error(`Unknown operation type: ${operation.type}`));
         }

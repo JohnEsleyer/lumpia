@@ -1,8 +1,9 @@
 // server/types.ts
 
 export interface ProjectOperation {
-    type: 'trim' | 'text' | 'stitch';
-    params: any; // You can make this stricter (e.g. TrimParams | TextParams) later
+    // Add 'subtitle' and any other types you might use like 'overlay'
+    type: 'trim' | 'text' | 'stitch' | 'subtitle' | 'overlay';
+    params: any;
     id: string;
 }
 
@@ -22,6 +23,7 @@ export interface Project {
         edges: any[];
     };
 }
+
 export interface CreateProjectDTO {
     name: string;
     width?: string | number;

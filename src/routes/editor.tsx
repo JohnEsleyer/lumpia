@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   ReactFlow,
@@ -10,7 +10,6 @@ import {
   Position,
   ReactFlowProvider,
   useReactFlow,
-  type Connection,
   type Edge,
   type Node,
   type NodeProps,
@@ -21,29 +20,30 @@ import '@xyflow/react/dist/style.css';
 import {
   Play,
   Pause,
-  SkipBack,
   Scissors,
-  Plus,
   Download,
   ChevronLeft,
   ChevronRight,
-  Film,
   FlaskConical,
   Loader2,
   MonitorPlay,
   X,
   Clapperboard,
   Layers,
-  Save
+  Save,
+  FileAudio,
+  Music // Added Icons
 } from 'lucide-react';
 
-import { getProject, getProjectAssets, addAsset, deleteAsset, exportProject, renderSequence, updateProject } from '../api';
+import { getProject, getProjectAssets, renderSequence, updateProject } from '../api';
 import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
-import { useFFmpeg } from '../hooks/useFFmpeg';
-import { fetchFile } from '@ffmpeg/util';
 import { OutputNode, type OutputNodeType } from '../remotion/nodes/OutputNode';
+import { AudioNode, type AudioNodeType } from '../remotion/nodes/AudioNode'; // Imported AudioNode
 import ButtonEdge from '../remotion/edges/ButtonEdge';
+
+
+
 
 export const Route = createFileRoute('/editor')({
   component: () => (
@@ -56,6 +56,44 @@ export const Route = createFileRoute('/editor')({
   },
 });
 
+
+const getSequenceFromHandle = (
+  nodes: Node[],
+  edges: Edge[],
+  targetNodeId: string,
+  targetHandleId: string,
+  nodeType: string
+) => {
+  const sequence = [];
+  let currentEdge = edges.find(e => e.target === targetNodeId && e.targetHandle === targetHandleId);
+
+  while (currentEdge) {
+    const sourceNode = nodes.find(n => n.id === currentEdge!.source);
+    if (sourceNode && sourceNode.type === nodeType) {
+      // Add to start of array since we are traversing backwards
+      sequence.unshift({
+        url: sourceNode.data.url,
+        // @ts-ignore - Dynamic data access
+        start: sourceNode.data.startOffset || 0,
+        // @ts-ignore
+        end: sourceNode.data.endOffset || sourceNode.data.duration || 0,
+        // @ts-ignore
+        label: sourceNode.data.label
+      });
+
+      // Find the next edge pointing to this node's input (if chaining is supported)
+      // For now, let's assume simple chaining: Source -> Target
+      const nextEdge = edges.find(e => e.target === sourceNode.id);
+      currentEdge = nextEdge;
+    } else {
+      break;
+    }
+  }
+  return sequence;
+};
+
+
+// --- Types ---
 type ClipData = {
   label: string;
   url: string;
@@ -76,13 +114,18 @@ interface LibraryAsset {
 }
 
 type ClipNode = Node<ClipData>;
-type EditorNode = ClipNode | OutputNodeType;
+type EditorNode = ClipNode | OutputNodeType | AudioNodeType; // Updated Union Type
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   const ms = Math.floor((s % 1) * 10);
   return `${m}:${sec.toString().padStart(2, '0')}.${ms}`;
+};
+
+// --- Helpers ---
+const isAudioFile = (filename: string) => {
+  return /\.(mp3|wav|aac|m4a|flac|ogg)$/i.test(filename);
 };
 
 // --- Node Components ---
@@ -113,11 +156,7 @@ const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
-            <button
-              onClick={handleDelete}
-              className="text-slate-500 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-white/5"
-              title="Delete Clip"
-            >
+            <button onClick={handleDelete} className="text-slate-500 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-white/5" title="Delete Clip">
               <X size={12} />
             </button>
           </div>
@@ -147,10 +186,11 @@ const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
   );
 };
 
-const nodeTypes = { clip: FilmstripNode, output: OutputNode };
+// Update nodeTypes to include 'audio'
+const nodeTypes = { clip: FilmstripNode, output: OutputNode, audio: AudioNode };
 const edgeTypes = { 'button-edge': ButtonEdge };
 
-// --- Library Panel Component ---
+// --- Library Panel ---
 
 const LibraryPanel = ({
   assets,
@@ -169,23 +209,19 @@ const LibraryPanel = ({
 
   return (
     <aside className="w-[300px] bg-[#0a0a0a] border-r border-white/5 flex flex-col z-20 shrink-0 transition-all select-none">
-      {/* Tabs */}
+      {/* Tab Headers */}
       <div className="flex border-b border-white/5">
         <button
           onClick={() => setActiveTab('media')}
           className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 
-                    ${activeTab === 'media'
-              ? 'border-yellow-500 text-white bg-white/5'
-              : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                    ${activeTab === 'media' ? 'border-yellow-500 text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
         >
-          <span className="flex items-center justify-center gap-2"><Clapperboard size={14} /> Clips</span>
+          <span className="flex items-center justify-center gap-2"><Clapperboard size={14} /> Media</span>
         </button>
         <button
           onClick={() => setActiveTab('nodes')}
           className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 
-                    ${activeTab === 'nodes'
-              ? 'border-purple-500 text-white bg-white/5'
-              : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                    ${activeTab === 'nodes' ? 'border-purple-500 text-white bg-white/5' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
         >
           <span className="flex items-center justify-center gap-2"><Layers size={14} /> Nodes</span>
         </button>
@@ -195,47 +231,71 @@ const LibraryPanel = ({
         {activeTab === 'media' ? (
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Project Clips</span>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Project Files</span>
               <Button onClick={onOpenUploadModal} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 border-0">
-                + Add Clip
+                + Add File
               </Button>
             </div>
 
             {assets.length === 0 && (
               <div className="text-center py-8 border border-dashed border-white/10 rounded-lg">
                 <span className="text-2xl block mb-2 opacity-50">📹</span>
-                <p className="text-xs text-slate-500">No clips added yet</p>
+                <p className="text-xs text-slate-500">No media files yet</p>
               </div>
             )}
 
             <div className="grid grid-cols-1 gap-2">
-              {assets.map(asset => (
-                <div
-                  key={asset.name}
-                  draggable
-                  onDragStart={(e) => onDragStart(e, 'asset', asset)}
-                  className="group flex gap-3 p-2 rounded-lg bg-[#151515] border border-white/5 hover:border-yellow-500/50 cursor-grab active:cursor-grabbing hover:bg-[#1a1a1a] transition-all hover:shadow-lg hover:shadow-black/50"
-                >
-                  <div className="w-20 h-12 bg-black rounded-md overflow-hidden shrink-0 relative border border-white/5">
-                    {asset.thumbnailUrl ? (
-                      <img src={`http://localhost:3001${asset.thumbnailUrl}`} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={asset.name} />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-600 text-[10px]">No Prev</div>
-                    )}
-                    <div className="absolute bottom-0 right-0 bg-black/80 px-1 rounded-tl-md text-[8px] font-mono text-white">
-                      {asset.duration ? formatTime(asset.duration) : '0:00'}
+              {assets.map(asset => {
+                const isAudio = isAudioFile(asset.name);
+                return (
+                  <div
+                    key={asset.name}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, isAudio ? 'asset-audio' : 'asset', asset)}
+                    className={`
+                      group flex gap-3 p-2 rounded-lg border cursor-grab active:cursor-grabbing transition-all hover:shadow-lg hover:shadow-black/50
+                      ${isAudio
+                        ? 'bg-[#111] border-emerald-900/30 hover:border-emerald-500/50 hover:bg-[#151515]'
+                        : 'bg-[#151515] border-white/5 hover:border-yellow-500/50 hover:bg-[#1a1a1a]'
+                      }
+                    `}
+                  >
+                    <div className={`
+                      w-20 h-12 rounded-md overflow-hidden shrink-0 relative border flex items-center justify-center
+                      ${isAudio ? 'bg-emerald-950/30 border-emerald-500/20' : 'bg-black border-white/5'}
+                    `}>
+                      {isAudio ? (
+                        <FileAudio className="text-emerald-600 opacity-80" size={20} />
+                      ) : (
+                        asset.thumbnailUrl ? (
+                          <img src={`http://localhost:3001${asset.thumbnailUrl}`} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={asset.name} />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-slate-800 text-slate-600 text-[10px]">No Prev</div>
+                        )
+                      )}
+
+                      <div className="absolute bottom-0 right-0 bg-black/80 px-1 rounded-tl-md text-[8px] font-mono text-white">
+                        {asset.duration ? formatTime(asset.duration) : '0:00'}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1 flex flex-col justify-center">
+                      <div className={`text-xs font-bold truncate transition-colors ${isAudio ? 'text-emerald-100 group-hover:text-emerald-400' : 'text-slate-200 group-hover:text-yellow-400'}`}>
+                        {asset.name}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono mt-0.5 flex items-center gap-1">
+                        {isAudio ? 'Audio Track' : 'Video Clip'}
+                      </div>
                     </div>
                   </div>
-                  <div className="min-w-0 flex-1 flex flex-col justify-center">
-                    <div className="text-xs font-bold text-slate-200 truncate group-hover:text-yellow-400 transition-colors">{asset.name}</div>
-                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">Video Clip</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : (
           <div className="space-y-6">
+
+            {/* Processors Section */}
             <div>
               <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Processors</div>
               <div
@@ -258,21 +318,29 @@ const LibraryPanel = ({
               </div>
             </div>
 
-            {/* Placeholder for future nodes */}
-            <div className="opacity-50 pointer-events-none grayscale">
-              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Effects (Coming Soon)</div>
-              <div className="p-3 bg-[#151515] border border-white/5 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                    <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            {/* Audio Section (New) */}
+            <div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Audio</div>
+              <div
+                draggable
+                onDragStart={(e) => onDragStart(e, 'node-audio-empty', {})}
+                className="p-3 bg-[#151515] border border-emerald-500/30 rounded-xl cursor-grab active:cursor-grabbing hover:bg-[#1a1a1a] hover:border-emerald-500 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all group select-none"
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                    <Music size={20} />
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-slate-200">Color Grade</div>
-                    <div className="text-[10px] text-slate-500">Filter</div>
+                    <div className="text-sm font-bold text-slate-200 group-hover:text-emerald-400 transition-colors">Audio Clip</div>
+                    <div className="text-[10px] text-slate-500">Sound / Music</div>
                   </div>
+                </div>
+                <div className="text-[10px] text-slate-500 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
+                  Generic audio container. Drag to graph.
                 </div>
               </div>
             </div>
+
           </div>
         )}
       </div>
@@ -283,7 +351,7 @@ const LibraryPanel = ({
 // --- Top Bar ---
 const TopBar = ({
   activeNode,
-  onOpenUploadModal, // Kept for modal triggers elsewhere, but removed from top bar button
+  onOpenUploadModal,
   isLibraryVisible,
   toggleLibrary,
   handleExport,
@@ -437,6 +505,7 @@ function EditorApp() {
             }
           }
         }
+        // TODO: Handle Audio Preview in the future
       } else {
         setActiveNodeId(null);
       }
@@ -446,39 +515,41 @@ function EditorApp() {
   const handleProcessOutput = useCallback(async (nodeId: string) => {
     if (!projectId) return;
 
+    // Set processing state
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isProcessing: true } } : n));
 
     try {
       const edges = getEdges();
       const nodes = getNodes();
-      const videoEdge = edges.find(e => e.target === nodeId && e.targetHandle === 'video-in');
 
-      if (!videoEdge) throw new Error("No video sequence connected to the Video Input!");
+      // 1. Get Video Sequence
+      const videoClips = getSequenceFromHandle(nodes, edges, nodeId, 'video-in', 'clip');
 
-      const backwardsSequence = [];
-      let currentId: string | null = videoEdge.source;
+      // 2. Get Audio Sequence (New Logic)
+      const audioClips = getSequenceFromHandle(nodes, edges, nodeId, 'audio-in', 'audio');
 
-      while (currentId) {
-        const node = nodes.find(n => n.id === currentId);
-        if (node && node.type === 'clip') {
-          const clipData = node.data as ClipData;
-          backwardsSequence.push({
-            url: clipData.url,
-            start: clipData.startOffset,
-            end: clipData.endOffset
-          });
-          const incomingEdge = edges.find(e => e.target === currentId);
-          currentId = incomingEdge ? incomingEdge.source : null;
-        } else {
-          break;
-        }
+      if (videoClips.length === 0) {
+        throw new Error("No video sequence connected to the Video Input!");
       }
 
-      const forwardSequence = backwardsSequence.reverse();
-      if (forwardSequence.length === 0) throw new Error("No clips found in the connected sequence.");
+      console.log("Sending to render:", { videoClips, audioClips });
 
-      const result = await renderSequence(projectId, forwardSequence);
+      // 3. Send to Backend
+      // We rely on the generic 'renderSequence' API, but we'll modify it to accept audioClips
+      // Note: You might need to update api.ts if strict typing is enforced, but JSON body allows it.
+      const response = await fetch(`http://localhost:3001/api/projects/${projectId}/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clips: videoClips,
+          audioClips: audioClips // Add this field
+        }),
+      });
 
+      if (!response.ok) throw new Error('Render request failed');
+      const result = await response.json();
+
+      // 4. Update Node with Result
       setNodes(nds => nds.map(n => n.id === nodeId ? {
         ...n,
         data: {
@@ -488,6 +559,7 @@ function EditorApp() {
         }
       } : n));
 
+      // 5. Auto-play result
       if (videoRef.current) {
         videoRef.current.src = `http://localhost:3001${result.url}`;
         videoRef.current.play();
@@ -501,6 +573,7 @@ function EditorApp() {
       setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isProcessing: false } } : n));
     }
   }, [projectId, getEdges, getNodes, setNodes]);
+
 
   const onDragStart = (e: React.DragEvent, type: string, payload: any) => {
     e.dataTransfer.setData('application/json', JSON.stringify({ type, payload }));
@@ -533,6 +606,24 @@ function EditorApp() {
         }
       };
       setNodes(nds => nds.concat(newNode));
+    } else if (type === 'asset-audio') {
+      // NEW: Audio Node Creation Logic
+      const asset = payload as LibraryAsset;
+      let duration = asset.duration || 10;
+
+      const newNode: AudioNodeType = {
+        id: crypto.randomUUID(),
+        type: 'audio',
+        position,
+        data: {
+          label: asset.name,
+          url: `http://localhost:3001${asset.url}`,
+          duration: duration,
+          startOffset: 0,
+          endOffset: duration
+        }
+      };
+      setNodes(nds => nds.concat(newNode));
     } else if (type === 'node-output') {
       const newNode: OutputNodeType = {
         id: crypto.randomUUID(),
@@ -545,6 +636,20 @@ function EditorApp() {
         }
       };
       setNodes(nds => nds.concat(newNode));
+    } else if (type === 'node-audio-empty') {
+      const newNode: AudioNodeType = {
+        id: crypto.randomUUID(),
+        type: 'audio',
+        position,
+        data: {
+          label: 'Empty Audio',
+          url: '', // Empty URL indicates placeholder
+          duration: 10,
+          startOffset: 0,
+          endOffset: 10
+        }
+      };
+      setNodes(nds => nds.concat(newNode));
     }
   }, [screenToFlowPosition, setNodes, handleProcessOutput]);
 
@@ -552,6 +657,7 @@ function EditorApp() {
     if (!activeNodeId) return undefined;
     const node = nodes.find(n => n.id === activeNodeId);
     if (node && node.type === 'clip') return node as ClipNode;
+    // We could return AudioNodeData here if we wanted to show specific audio tools
     return undefined;
   }, [activeNodeId, nodes]);
 
@@ -563,13 +669,13 @@ function EditorApp() {
         setProject(p);
         const assets = await getProjectAssets(projectId);
         setLibraryAssets(assets);
-        
+
         // Restore Editor State if exists
         if (p.editorState) {
           if (p.editorState.nodes) setNodes(p.editorState.nodes);
           if (p.editorState.edges) setEdges(p.editorState.edges);
         }
-        
+
         setIsLoadingProject(false);
       }).catch(console.error);
     }
@@ -579,7 +685,7 @@ function EditorApp() {
   const handleSaveProject = async () => {
     if (!projectId) return;
     setIsSaving(true);
-    setLastSaved(null); // Reset to clear previous "Saved" message if any
+    setLastSaved(null);
 
     const editorState = {
       nodes: getNodes(),
@@ -588,12 +694,9 @@ function EditorApp() {
 
     try {
       await updateProject(projectId, { editorState });
-      // Simulate a small delay for better UX or if API is too fast
       setTimeout(() => {
         setIsSaving(false);
         setLastSaved(new Date());
-        
-        // Hide the "Saved" text after 3 seconds
         setTimeout(() => setLastSaved(null), 3000);
       }, 500);
     } catch (e) {
@@ -703,11 +806,11 @@ function EditorApp() {
         />
 
         <div className="flex flex-1 overflow-hidden">
-          <LibraryPanel 
-            assets={libraryAssets} 
-            onOpenUploadModal={handleUploadClick} 
-            onDragStart={onDragStart} 
-            isVisible={isLibraryVisible} 
+          <LibraryPanel
+            assets={libraryAssets}
+            onOpenUploadModal={handleUploadClick}
+            onDragStart={onDragStart}
+            isVisible={isLibraryVisible}
           />
 
           <div className="flex-1 relative h-full bg-[#050505] shadow-inner" onDragOver={e => e.preventDefault()} onDrop={onDrop}>
