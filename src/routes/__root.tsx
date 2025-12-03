@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet, Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
+import { Home, Scissors, Clapperboard, MessageSquare, ChevronLeft, ChevronRight, Menu } from 'lucide-react'
 
 export const Route = createRootRoute({
     component: RootLayout,
@@ -15,11 +16,10 @@ function RootLayout() {
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     const navItems = [
-        { to: '/', icon: '🏠', label: 'Dashboard', requiresProject: false },
-        { to: '/cutter', icon: '✂️', label: 'Cutter', requiresProject: true },
-        { to: '/stitcher', icon: '🧵', label: 'Stitcher', requiresProject: true },
-        { to: '/editor', icon: '🎬', label: 'Editor', requiresProject: true },
-        { to: '/subtitles', icon: '💬', label: 'Subtitles', requiresProject: true },
+        { to: '/', icon: <Home size={20} />, label: 'Dashboard', requiresProject: false },
+        { to: '/cutter', icon: <Scissors size={20} />, label: 'Cutter', requiresProject: true },
+        { to: '/editor', icon: <Clapperboard size={20} />, label: 'Editor', requiresProject: true },
+        { to: '/subtitles', icon: <MessageSquare size={20} />, label: 'Subtitles', requiresProject: true },
     ];
 
     return (
@@ -38,9 +38,9 @@ function RootLayout() {
                     title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
                 >
                     {isCollapsed ? (
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+                        <ChevronRight size={12} />
                     ) : (
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                        <ChevronLeft size={12} />
                     )}
                 </button>
 
@@ -80,7 +80,7 @@ function RootLayout() {
                                     ${isCollapsed ? 'justify-center' : ''}
                                 `}
                             >
-                                <span className={`text-xl shrink-0 transition-transform ${isActive ? 'scale-110' : 'group-hover:scale-105'}`}>{item.icon}</span>
+                                <span className={`shrink-0 transition-transform ${isActive ? 'scale-110' : 'group-hover:scale-105'}`}>{item.icon}</span>
                                 {!isCollapsed && <span className="hidden lg:block whitespace-nowrap text-sm">{item.label}</span>}
 
                                 {/* Active Indicator Bar */}

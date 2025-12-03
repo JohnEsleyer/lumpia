@@ -18,6 +18,20 @@ import {
   useOnSelectionChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import {
+  Play,
+  Pause,
+  SkipBack,
+  Scissors,
+  Plus,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  Film,
+  FlaskConical,
+  Loader2,
+  MonitorPlay
+} from 'lucide-react';
 
 import { getProject, getProjectAssets, addAsset, deleteAsset, exportProject, renderSequence } from '../api';
 import type { Project } from '../types';
@@ -97,7 +111,7 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
             </div>
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 gap-2">
-              <div className="w-6 h-6 rounded-full border-2 border-slate-800 border-t-slate-600 animate-spin" />
+              <Loader2 className="w-6 h-6 animate-spin" />
               <span className="text-[10px]">Processing...</span>
             </div>
           )}
@@ -113,28 +127,25 @@ const FilmstripNode = ({ data, selected }: NodeProps<ClipNode>) => {
 
 const nodeTypes = { clip: FilmstripNode, output: OutputNode };
 
-// TopBar (placeholder to reduce file size display)
-const TopBar = ({ activeNode, currentTime, isPlaying, handleSplit, handlePlayPause, handlePlaySequence, onOpenUploadModal, isLibraryVisible, toggleLibrary, handleExport }: any) => (
+// TopBar
+const TopBar = ({ activeNode, onOpenUploadModal, isLibraryVisible, toggleLibrary, handleExport }: any) => (
   <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
     <div className="flex items-center gap-4">
       <Button onClick={toggleLibrary} className={`p-2 rounded-md transition-colors ${isLibraryVisible ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}>
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+        {isLibraryVisible ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
       </Button>
       <div className="text-sm font-bold text-slate-200 tracking-wider uppercase">Editor</div>
       <div className="h-4 w-px bg-white/10" />
       <div className="text-xs text-slate-500">{activeNode ? `Active: ${activeNode.data.label}` : 'No Clip Selected'}</div>
     </div>
-    <div className="flex items-center gap-6 absolute left-1/2 -translate-x-1/2">
-      <div className="font-mono text-2xl font-bold text-yellow-500 tabular-nums tracking-tight min-w-[120px] text-center">{activeNode ? formatTime(currentTime) : "--:--.--"}</div>
-      <div className="flex items-center gap-2">
-        <Button onClick={(e) => { e.stopPropagation(); handlePlaySequence(); }} className="h-10 px-4 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white border border-white/5 font-bold">⏮ Play All</Button>
-        <Button onClick={(e) => { e.stopPropagation(); handlePlayPause(); }} disabled={!activeNode} className={`h-10 px-6 rounded-full font-bold transition-all ${isPlaying ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>{isPlaying ? '⏸ Pause' : '▶ Play Clip'}</Button>
-        <Button onClick={(e) => { e.stopPropagation(); handleSplit(); }} disabled={!activeNode || (activeNode.data.endOffset - activeNode.data.startOffset) < 0.2} className="h-10 px-4 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/5">✂ Split</Button>
-      </div>
-    </div>
+
     <div className="flex items-center gap-3">
-      <Button onClick={onOpenUploadModal} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20">+ Asset</Button>
-      <Button onClick={handleExport} className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400">Export</Button>
+      <Button onClick={onOpenUploadModal} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 flex items-center gap-2">
+        <Plus size={14} /> Asset
+      </Button>
+      <Button onClick={handleExport} className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400 flex items-center gap-2">
+        <Download size={14} /> Export
+      </Button>
     </div>
   </div>
 );
@@ -163,18 +174,41 @@ function EditorApp() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
+  // Handle Node Selection & Preview
   useOnSelectionChange({
     onChange: ({ nodes }) => {
-      setSelectedNodeId(nodes.length > 0 ? nodes[0].id : null);
-      if (nodes.length > 0 && nodes[0].type === 'output') {
-        const outData = nodes[0].data as any;
-        if (outData.processedUrl && videoRef.current) {
-          videoRef.current.src = `http://localhost:3001${outData.processedUrl}`;
-          videoRef.current.pause();
-          setIsPlaying(false);
-          setActiveNodeId(nodes[0].id);
+      const selected = nodes[0];
+      setSelectedNodeId(selected ? selected.id : null);
+
+      if (selected) {
+        setActiveNodeId(selected.id);
+        if (selected.type === 'output') {
+          const outData = selected.data as any;
+          if (outData.processedUrl && videoRef.current) {
+            videoRef.current.src = `http://localhost:3001${outData.processedUrl}`;
+            videoRef.current.pause();
+            setIsPlaying(false);
+          }
+        } else if (selected.type === 'clip') {
+          const clipData = selected.data as ClipData;
+          if (videoRef.current) {
+            // If switching to a new clip, update src
+            // Note: In a real app we might want to avoid reloading if it's the same URL, 
+            // but here we want to ensure we are previewing the selected clip.
+            const currentSrc = videoRef.current.src;
+            const newSrc = clipData.url;
+
+            // Only update if different to prevent flickering/resetting if we just clicked the same node
+            if (currentSrc !== newSrc) {
+              videoRef.current.src = newSrc;
+              videoRef.current.currentTime = clipData.startOffset; // Start preview at clip start
+            }
+          }
         }
+      } else {
+        setActiveNodeId(null);
       }
     },
   });
@@ -274,7 +308,6 @@ function EditorApp() {
         id: crypto.randomUUID(),
         type: 'output',
         position,
-        // FIX: Remove white rectangle by making the container transparent
         style: { background: 'transparent', border: 'none', width: 'auto', padding: 0 },
         data: {
           label: 'Final Render',
@@ -305,10 +338,91 @@ function EditorApp() {
     }
   }, [projectId]);
 
-  // Stubs for controls (use previous implementation)
-  const handleSplit = () => { };
-  const handlePlayPause = () => { if (videoRef.current) { isPlaying ? videoRef.current.pause() : videoRef.current.play(); setIsPlaying(!isPlaying); } };
-  const handlePlaySequence = () => { };
+  // Player Controls
+  const handlePlayPause = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play();
+        setIsPlaying(true);
+      } else {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  };
+
+  const handleSplit = () => {
+    if (!activeNodeId) return;
+    const node = nodes.find(n => n.id === activeNodeId);
+    if (!node || node.type !== 'clip') return;
+
+    const clipData = node.data as ClipData;
+    const splitTime = currentTime;
+
+    // Validate split time
+    if (splitTime <= clipData.startOffset + 0.1 || splitTime >= clipData.endOffset - 0.1) {
+      alert("Cannot split too close to the edge");
+      return;
+    }
+
+    // Create two new nodes
+    const leftNode: ClipNode = {
+      ...node,
+      id: crypto.randomUUID(),
+      data: {
+        ...clipData,
+        endOffset: splitTime
+      }
+    };
+
+    const rightNode: ClipNode = {
+      ...node,
+      id: crypto.randomUUID(),
+      position: { x: node.position.x + 350, y: node.position.y }, // Offset slightly
+      data: {
+        ...clipData,
+        startOffset: splitTime
+      }
+    };
+
+    // Update nodes
+    setNodes(nds => nds.filter(n => n.id !== activeNodeId).concat([leftNode, rightNode]));
+
+    // Attempt to reconnect edges (simplified: just disconnect for now as re-linking is complex without knowing topology)
+    // In a real implementation, we'd find incoming edges to original and point to leftNode,
+    // and outgoing edges from original and point from rightNode.
+    // Then connect leftNode -> rightNode.
+
+    const incoming = edges.filter(e => e.target === activeNodeId);
+    const outgoing = edges.filter(e => e.source === activeNodeId);
+
+    const newEdges: Edge[] = [];
+
+    // Connect incoming to leftNode
+    incoming.forEach(e => {
+      newEdges.push({ ...e, id: crypto.randomUUID(), target: leftNode.id });
+    });
+
+    // Connect rightNode to outgoing
+    outgoing.forEach(e => {
+      newEdges.push({ ...e, id: crypto.randomUUID(), source: rightNode.id });
+    });
+
+    // Connect leftNode to rightNode
+    newEdges.push({
+      id: crypto.randomUUID(),
+      source: leftNode.id,
+      target: rightNode.id,
+      animated: true,
+      style: { stroke: '#eab308', strokeWidth: 2 }
+    });
+
+    setEdges(eds => eds.filter(e => e.source !== activeNodeId && e.target !== activeNodeId).concat(newEdges));
+
+    // Select the right node (standard editor behavior)
+    setActiveNodeId(rightNode.id);
+  };
+
   const handleExport = () => { };
   const handleUploadClick = () => setIsUploadModalOpen(true);
   const handleAssetAdded = (updatedAssets: LibraryAsset[]) => setLibraryAssets(updatedAssets);
@@ -320,11 +434,6 @@ function EditorApp() {
       <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
         <TopBar
           activeNode={getActiveNodeData()}
-          currentTime={currentTime}
-          isPlaying={isPlaying}
-          handleSplit={handleSplit}
-          handlePlayPause={handlePlayPause}
-          handlePlaySequence={handlePlaySequence}
           onOpenUploadModal={handleUploadClick}
           isLibraryVisible={isLibraryVisible}
           toggleLibrary={() => setIsLibraryVisible(!isLibraryVisible)}
@@ -363,7 +472,9 @@ function EditorApp() {
                     <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Process Nodes</div>
                     <div draggable onDragStart={(e) => onDragStart(e, 'node-output', {})} className="p-3 bg-[#151515] border border-purple-500/30 rounded-xl cursor-grab hover:bg-[#1a1a1a] hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.2)] transition-all group">
                       <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold text-lg">⚗️</div>
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold text-lg">
+                          <FlaskConical size={18} />
+                        </div>
                         <div>
                           <div className="text-sm font-bold text-slate-200 group-hover:text-purple-400 transition-colors">Output Node</div>
                           <div className="text-[10px] text-slate-500">Render & Preview</div>
@@ -385,8 +496,44 @@ function EditorApp() {
           </div>
 
           <div className="w-[450px] bg-[#000] border-l border-white/5 flex flex-col z-20 shadow-2xl relative">
-            <video ref={videoRef} className="w-full h-full object-contain" onTimeUpdate={() => { if (videoRef.current) setCurrentTime(videoRef.current.currentTime); }} onClick={handlePlayPause} />
-            {!activeNodeId && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-slate-700"><span className="text-4xl mb-2 opacity-30">📺</span><span className="text-sm">Select a clip to preview</span></div>}
+            <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-contain"
+                onTimeUpdate={() => {
+                  if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+                }}
+                onLoadedMetadata={() => {
+                  if (videoRef.current) setDuration(videoRef.current.duration);
+                }}
+                onClick={handlePlayPause}
+              />
+              {!activeNodeId && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-slate-700"><MonitorPlay size={48} className="mb-2 opacity-30" /><span className="text-sm">Select a clip to preview</span></div>}
+            </div>
+
+            {/* Player Controls */}
+            <div className="h-16 bg-[#0a0a0a] border-t border-white/5 px-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <Button onClick={handlePlayPause} className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all">
+                  {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+                </Button>
+                <div className="flex flex-col ml-2">
+                  <span className="text-lg font-mono font-bold text-yellow-500 leading-none">{formatTime(currentTime)}</span>
+                  <span className="text-[10px] font-mono text-slate-600 leading-none mt-1">{formatTime(duration)}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handleSplit}
+                  disabled={!activeNodeId || (getActiveNodeData() === undefined)}
+                  className="h-8 px-3 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2 text-xs font-bold border border-white/5"
+                  title="Split Clip at Current Time"
+                >
+                  <Scissors size={14} /> Split
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

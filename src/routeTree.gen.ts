@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SubtitlesRouteImport } from './routes/subtitles'
-import { Route as StitcherRouteImport } from './routes/stitcher'
 import { Route as EditorRouteImport } from './routes/editor'
 import { Route as CutterRouteImport } from './routes/cutter'
 import { Route as IndexRouteImport } from './routes/index'
@@ -19,11 +18,6 @@ import { Route as ProjectProjectIdRouteImport } from './routes/project/$projectI
 const SubtitlesRoute = SubtitlesRouteImport.update({
   id: '/subtitles',
   path: '/subtitles',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const StitcherRoute = StitcherRouteImport.update({
-  id: '/stitcher',
-  path: '/stitcher',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EditorRoute = EditorRouteImport.update({
@@ -51,7 +45,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cutter': typeof CutterRoute
   '/editor': typeof EditorRoute
-  '/stitcher': typeof StitcherRoute
   '/subtitles': typeof SubtitlesRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
 }
@@ -59,7 +52,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cutter': typeof CutterRoute
   '/editor': typeof EditorRoute
-  '/stitcher': typeof StitcherRoute
   '/subtitles': typeof SubtitlesRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
 }
@@ -68,33 +60,19 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cutter': typeof CutterRoute
   '/editor': typeof EditorRoute
-  '/stitcher': typeof StitcherRoute
   '/subtitles': typeof SubtitlesRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/cutter'
-    | '/editor'
-    | '/stitcher'
-    | '/subtitles'
-    | '/project/$projectId'
+  fullPaths: '/' | '/cutter' | '/editor' | '/subtitles' | '/project/$projectId'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/cutter'
-    | '/editor'
-    | '/stitcher'
-    | '/subtitles'
-    | '/project/$projectId'
+  to: '/' | '/cutter' | '/editor' | '/subtitles' | '/project/$projectId'
   id:
     | '__root__'
     | '/'
     | '/cutter'
     | '/editor'
-    | '/stitcher'
     | '/subtitles'
     | '/project/$projectId'
   fileRoutesById: FileRoutesById
@@ -103,7 +81,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CutterRoute: typeof CutterRoute
   EditorRoute: typeof EditorRoute
-  StitcherRoute: typeof StitcherRoute
   SubtitlesRoute: typeof SubtitlesRoute
   ProjectProjectIdRoute: typeof ProjectProjectIdRoute
 }
@@ -115,13 +92,6 @@ declare module '@tanstack/react-router' {
       path: '/subtitles'
       fullPath: '/subtitles'
       preLoaderRoute: typeof SubtitlesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/stitcher': {
-      id: '/stitcher'
-      path: '/stitcher'
-      fullPath: '/stitcher'
-      preLoaderRoute: typeof StitcherRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/editor': {
@@ -159,7 +129,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CutterRoute: CutterRoute,
   EditorRoute: EditorRoute,
-  StitcherRoute: StitcherRoute,
   SubtitlesRoute: SubtitlesRoute,
   ProjectProjectIdRoute: ProjectProjectIdRoute,
 }

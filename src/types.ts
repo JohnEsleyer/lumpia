@@ -15,6 +15,10 @@ export interface Project {
     currentHead: string | null;
     thumbnail?: string;
     createdAt: string;
+    editorState?: {
+        nodes: any[];
+        edges: any[];
+    };
 }
 
 export interface ProjectAsset {
