@@ -18,6 +18,7 @@ interface PreviewMonitorProps {
     isExpanded?: boolean;
     onToggleExpand?: () => void;
     projectDimensions?: { width: number; height: number };
+    trimRange?: { start: number; end: number };
 }
 
 export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
@@ -32,7 +33,8 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     processedUrl,
     isExpanded,
     onToggleExpand,
-    projectDimensions
+    projectDimensions,
+    trimRange,
 }) => {
     const playerRef = useRef<PlayerRef>(null);
     const audioRef = useRef<HTMLAudioElement>(null); // Sidecar Audio Ref
@@ -53,6 +55,20 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         onTimeUpdateRef.current = onTimeUpdate;
         onPlayPauseRef.current = onPlayPause;
     }, [onTimeUpdate, onPlayPause]);
+
+
+    // --- TRIM LOOPING LOGIC ---
+    // If we are trimming, we want to auto-loop when we hit the end of the trim preview
+    useEffect(() => {
+        if (!trimRange) return;
+
+        // If current time exceeds the trim duration (plus a tiny buffer)
+        // Loop back to 0 (which is the start of the trimmed clip in the ghost state)
+        if (isPlaying && currentTime >= trimRange.end - 0.05) {
+            onSeek(0);
+        }
+    }, [currentTime, isPlaying, trimRange, onSeek]);
+
 
     const FPS = 30;
     const durationInFrames = Math.max(1, Math.ceil((previewState.totalDuration || 1) * FPS));
