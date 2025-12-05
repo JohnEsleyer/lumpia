@@ -1,18 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ReactFlow,
   Background,
   useNodesState,
   useEdgesState,
   addEdge,
-  Handle,
-  Position,
   ReactFlowProvider,
   useReactFlow,
   type Edge,
-  type Node,
-  type NodeProps,
   Panel,
   useOnSelectionChange,
 } from '@xyflow/react';
@@ -22,13 +18,12 @@ import {
   ChevronLeft,
   ChevronRight,
   FlaskConical,
-  Loader2,
-  X,
   Clapperboard,
   Layers,
   Save,
   FileAudio,
-  Music
+  Music,
+  Plus
 } from 'lucide-react';
 import React from 'react';
 
@@ -37,13 +32,18 @@ import type { Project } from '../types';
 import { Button } from '../components/ui/Button';
 
 // Imported Nodes & Edges
-import { OutputNode, type OutputNodeType } from '../remotion/nodes/OutputNode';
+import { RenderNode, type RenderNodeType, type RenderNodeData } from '../remotion/nodes/RenderNode';
 import { AudioNode, type AudioNodeType } from '../remotion/nodes/AudioNode';
+import { ClipNode, type ClipNodeType, type ClipNodeData } from '../remotion/nodes/ClipNode';
 import ButtonEdge from '../remotion/edges/ButtonEdge';
 
 // Imported Inspectors
 import { AudioInspector } from '../components/inspector/AudioInspector';
 import { VideoInspector } from '../components/inspector/VideoInspector';
+
+// Imported Hooks
+import { usePreviewLogic } from '../hooks/usePreviewLogic';
+import { getSequenceFromHandle } from '../utils/graphUtils';
 
 // --- Routing ---
 export const Route = createFileRoute('/editor')({
@@ -58,16 +58,7 @@ export const Route = createFileRoute('/editor')({
 });
 
 // --- Types & Helpers ---
-type ClipData = {
-  label: string;
-  url: string;
-  filmstrip: string[];
-  thumbnailUrl?: string;
-  sourceDuration: number;
-  startOffset: number;
-  endOffset: number;
-  isPlaying?: boolean;
-};
+type ClipData = ClipNodeData;
 
 interface LibraryAsset {
   name: string;
@@ -77,8 +68,7 @@ interface LibraryAsset {
   duration?: number;
 }
 
-type ClipNode = Node<ClipData>;
-type EditorNode = ClipNode | OutputNodeType | AudioNodeType;
+type EditorNode = ClipNodeType | RenderNodeType | AudioNodeType;
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60);
@@ -89,106 +79,23 @@ const formatTime = (s: number) => {
 
 const isAudioFile = (filename: string) => /\.(mp3|wav|aac|m4a|flac|ogg)$/i.test(filename);
 
-// Helper to traverse graph backwards from a specific handle
-const getSequenceFromHandle = (
-  nodes: Node[],
-  edges: Edge[],
-  targetNodeId: string,
-  targetHandleId: string,
-  nodeType: string
-) => {
-  const sequence = [];
-  let currentEdge = edges.find(e => e.target === targetNodeId && e.targetHandle === targetHandleId);
-
-  while (currentEdge) {
-    const sourceNode = nodes.find(n => n.id === currentEdge!.source);
-    if (sourceNode && sourceNode.type === nodeType) {
-      sequence.unshift({
-        url: sourceNode.data.url,
-        // @ts-ignore
-        start: sourceNode.data.startOffset || 0,
-        // @ts-ignore
-        end: sourceNode.data.endOffset || sourceNode.data.duration || 0,
-        // @ts-ignore
-        label: sourceNode.data.label,
-        // @ts-ignore
-        volume: sourceNode.data.volume ?? 1.0,
-        // @ts-ignore
-        playbackRate: sourceNode.data.playbackRate ?? 1.0
-      });
-
-      // Find next edge (assuming linear chain for simplicity)
-      const nextEdge = edges.find(e => e.target === sourceNode.id);
-      currentEdge = nextEdge;
-    } else {
-      break;
-    }
-  }
-  return sequence;
-};
-
-// --- Custom Clip Node (Inline) ---
-const FilmstripNode = ({ id, data, selected }: NodeProps<ClipNode>) => {
-  const { setNodes } = useReactFlow();
-  const duration = data.endOffset - data.startOffset;
-
-  const thumbnails = useMemo(() => {
-    if (data.filmstrip && data.filmstrip.length > 0) return data.filmstrip.slice(0, 5);
-    if (data.thumbnailUrl) return [data.thumbnailUrl];
-    return [];
-  }, [data.filmstrip, data.thumbnailUrl]);
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  };
-
-  return (
-    <div className="relative group w-[300px]">
-      <Handle type="target" position={Position.Left} className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-left-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50" />
-      <div className={`flex flex-col w-full bg-[#1a1a1a] rounded-xl overflow-hidden transition-all duration-300 ${selected ? 'ring-2 ring-yellow-500 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-[1.02]' : 'ring-1 ring-white/10 shadow-xl hover:ring-white/30'} ${data.isPlaying ? 'ring-2 ring-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : ''}`}>
-        <div className="px-3 py-2 bg-[#111] flex justify-between items-center border-b border-white/5">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <div className="w-2 h-2 rounded-full bg-yellow-500/50" />
-            <span className="text-xs font-medium text-slate-300 truncate max-w-[180px]">{data.label}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-slate-500">{formatTime(duration)}</span>
-            <button onClick={handleDelete} className="text-slate-500 hover:text-red-500 transition-colors p-1 rounded-md hover:bg-white/5" title="Delete Clip">
-              <X size={12} />
-            </button>
-          </div>
-        </div>
-        <div className="h-24 bg-[#000] relative flex overflow-hidden">
-          {thumbnails.length > 0 ? (
-            <div className="flex w-full h-full">
-              {thumbnails.map((thumb, i) => (
-                <div key={i} className="flex-1 border-r border-black/20 last:border-none overflow-hidden relative">
-                  <img src={`http://localhost:3001${thumb}`} className="w-full h-full object-cover opacity-80 hover:opacity-100 transition-opacity" alt={`frame-${i}`} draggable={false} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-slate-700 gap-2">
-              <Loader2 className="w-6 h-6 animate-spin" />
-              <span className="text-[10px]">Processing...</span>
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60 pointer-events-none" />
-          <div className="absolute bottom-1 left-2 font-mono text-[9px] text-white/70">IN: {formatTime(data.startOffset)}</div>
-          <div className="absolute bottom-1 right-2 font-mono text-[9px] text-white/70">OUT: {formatTime(data.endOffset)}</div>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} className="!bg-yellow-500 !w-6 !h-6 !rounded-full !border-4 !border-[#1a1a1a] !-right-3 top-1/2 -translate-y-1/2 transition-transform hover:scale-125 z-50" />
-    </div>
-  );
-};
-
-// Node Types Registry
-const nodeTypes = { clip: FilmstripNode, output: OutputNode, audio: AudioNode };
+const nodeTypes = { clip: ClipNode, render: RenderNode, audio: AudioNode };
 const edgeTypes = { 'button-edge': ButtonEdge };
 
-// --- Library Panel ---
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  return debouncedValue;
+}
+
+// --- Library Panel (Updated for Grid View) ---
 const LibraryPanel = ({
   assets,
   onOpenUploadModal,
@@ -220,15 +127,20 @@ const LibraryPanel = ({
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-2">
               <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Project Files</span>
-              <Button onClick={onOpenUploadModal} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 border-0">+ Add File</Button>
+              <Button onClick={onOpenUploadModal} className="h-6 text-[10px] px-2 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 border-0 flex items-center gap-1">
+                <Plus size={12} /> Add
+              </Button>
             </div>
+
             {assets.length === 0 && (
               <div className="text-center py-8 border border-dashed border-white/10 rounded-lg">
                 <span className="text-2xl block mb-2 opacity-50">📹</span>
                 <p className="text-xs text-slate-500">No media files yet</p>
               </div>
             )}
-            <div className="grid grid-cols-1 gap-2">
+
+            {/* Grid Layout for Assets */}
+            <div className="grid grid-cols-2 gap-3">
               {assets.map(asset => {
                 const isAudio = isAudioFile(asset.name);
                 return (
@@ -236,15 +148,50 @@ const LibraryPanel = ({
                     key={asset.name}
                     draggable
                     onDragStart={(e) => onDragStart(e, isAudio ? 'asset-audio' : 'asset', asset)}
-                    className={`group flex gap-3 p-2 rounded-lg border cursor-grab active:cursor-grabbing transition-all hover:shadow-lg hover:shadow-black/50 ${isAudio ? 'bg-[#111] border-emerald-900/30 hover:border-emerald-500/50' : 'bg-[#151515] border-white/5 hover:border-yellow-500/50'}`}
+                    className={`
+                        group flex flex-col gap-2 p-2 rounded-lg border cursor-grab active:cursor-grabbing transition-all hover:scale-[1.02]
+                        ${isAudio
+                        ? 'bg-[#111] border-emerald-900/30 hover:border-emerald-500/50 hover:shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                        : 'bg-[#151515] border-white/5 hover:border-yellow-500/50 hover:shadow-[0_0_10px_rgba(234,179,8,0.2)]'
+                      }
+                    `}
                   >
-                    <div className={`w-20 h-12 rounded-md overflow-hidden shrink-0 relative border flex items-center justify-center ${isAudio ? 'bg-emerald-950/30 border-emerald-500/20' : 'bg-black border-white/5'}`}>
-                      {isAudio ? <FileAudio className="text-emerald-600 opacity-80" size={20} /> : asset.thumbnailUrl ? <img src={`http://localhost:3001${asset.thumbnailUrl}`} className="w-full h-full object-cover opacity-80 group-hover:opacity-100" alt={asset.name} /> : <div className="text-[10px] text-slate-600">No Prev</div>}
-                      <div className="absolute bottom-0 right-0 bg-black/80 px-1 rounded-tl-md text-[8px] font-mono text-white">{asset.duration ? formatTime(asset.duration) : '0:00'}</div>
+                    {/* Thumbnail Area */}
+                    <div className={`
+                        aspect-video w-full rounded-md overflow-hidden shrink-0 relative border flex items-center justify-center 
+                        ${isAudio ? 'bg-emerald-950/30 border-emerald-500/20' : 'bg-black border-white/5'}
+                    `}>
+                      {isAudio ? (
+                        <FileAudio className="text-emerald-600 opacity-80" size={32} />
+                      ) : asset.thumbnailUrl ? (
+                        <img
+                          src={`http://localhost:3001${asset.thumbnailUrl}`}
+                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                          alt={asset.name}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="text-[10px] text-slate-600 flex flex-col items-center">
+                          <Clapperboard size={20} className="mb-1 opacity-50" />
+                          <span>No Prev</span>
+                        </div>
+                      )}
+
+                      {/* Duration Badge */}
+                      <div className="absolute bottom-1 right-1 bg-black/80 px-1.5 py-0.5 rounded text-[9px] font-mono text-white font-bold backdrop-blur-sm shadow-sm border border-white/10">
+                        {asset.duration ? formatTime(asset.duration) : '0:00'}
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1 flex flex-col justify-center">
-                      <div className={`text-xs font-bold truncate ${isAudio ? 'text-emerald-100 group-hover:text-emerald-400' : 'text-slate-200 group-hover:text-yellow-400'}`}>{asset.name}</div>
-                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">{isAudio ? 'Audio Track' : 'Video Clip'}</div>
+
+                    {/* Metadata */}
+                    <div className="min-w-0">
+                      <div className={`text-[10px] font-bold truncate mb-0.5 ${isAudio ? 'text-emerald-100 group-hover:text-emerald-400' : 'text-slate-300 group-hover:text-yellow-400'}`} title={asset.name}>
+                        {asset.name}
+                      </div>
+                      <div className="text-[9px] text-slate-500 font-mono uppercase tracking-wider flex items-center gap-1">
+                        {isAudio ? <Music size={8} /> : <Clapperboard size={8} />}
+                        {isAudio ? 'Audio' : 'Video'}
+                      </div>
                     </div>
                   </div>
                 );
@@ -255,10 +202,10 @@ const LibraryPanel = ({
           <div className="space-y-6">
             <div>
               <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-3">Processors</div>
-              <div draggable onDragStart={(e) => onDragStart(e, 'node-output', {})} className="p-3 bg-[#151515] border border-purple-500/30 rounded-xl cursor-grab hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.2)] transition-all group select-none">
+              <div draggable onDragStart={(e) => onDragStart(e, 'node-render', {})} className="p-3 bg-[#151515] border border-purple-500/30 rounded-xl cursor-grab hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.2)] transition-all group select-none">
                 <div className="flex items-center gap-3 mb-2">
                   <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform"><FlaskConical size={20} /></div>
-                  <div><div className="text-sm font-bold text-slate-200 group-hover:text-purple-400">Output Node</div><div className="text-[10px] text-slate-500">Render & Preview</div></div>
+                  <div><div className="text-sm font-bold text-slate-200 group-hover:text-purple-400">Render Node</div><div className="text-[10px] text-slate-500">Stitch & Export</div></div>
                 </div>
               </div>
             </div>
@@ -278,40 +225,21 @@ const LibraryPanel = ({
   );
 };
 
-// --- Top Bar ---
-const TopBar = ({
-  activeNode,
-  isLibraryVisible,
-  toggleLibrary,
-  handleExport,
-  onSave,
-  isSaving,
-  lastSaved
-}: any) => (
+const TopBar = ({ activeNode, isLibraryVisible, toggleLibrary, handleExport, onSave, isSaving, lastSaved }: any) => (
   <div className="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-6 shrink-0 z-30 shadow-xl">
     <div className="flex items-center gap-4">
-      <Button onClick={toggleLibrary} className={`p-2 rounded-md transition-colors ${isLibraryVisible ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}>
-        {isLibraryVisible ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-      </Button>
-      <div className="text-sm font-bold text-slate-200 tracking-wider uppercase">Editor</div>
-      <div className="h-4 w-px bg-white/10" />
-      <div className="text-xs text-slate-500">{activeNode ? `Active: ${activeNode.data.label}` : 'No Clip Selected'}</div>
+      <Button onClick={toggleLibrary} className="p-2 bg-white/5 hover:bg-white/10">{isLibraryVisible ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}</Button>
+      <div className="text-sm font-bold text-slate-200">EDITOR</div>
     </div>
     <div className="flex items-center gap-3">
       {lastSaved && !isSaving && (
         <span className="text-xs text-green-500 font-medium animate-in fade-in mr-2 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span> Saved</span>
       )}
-      <Button onClick={onSave} isLoading={isSaving} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20 flex items-center gap-2">
-        <Save size={14} /> Save
-      </Button>
-      <Button onClick={handleExport} className="h-8 text-xs bg-transparent border border-white/10 hover:bg-white/5 text-slate-400 flex items-center gap-2">
-        <Download size={14} /> Export
-      </Button>
+      <Button onClick={onSave} isLoading={isSaving} className="h-8 text-xs bg-indigo-600">Save</Button>
     </div>
   </div>
 );
 
-// --- Modals ---
 const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded }) => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -335,7 +263,7 @@ const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-96 text-center">
+      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-96 text-center shadow-2xl">
         <h3 className="text-lg font-bold text-white mb-4">Upload Asset</h3>
         <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
         <Button onClick={() => fileInputRef.current?.click()} isLoading={isUploading} className="w-full">Select File</Button>
@@ -344,6 +272,7 @@ const AddAssetModal: React.FC<any> = ({ isOpen, onClose, projectId, onAssetAdded
     </div>
   );
 };
+
 
 // --- Main App Component ---
 function EditorApp() {
@@ -359,28 +288,28 @@ function EditorApp() {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
+  // EXPANDED VIEW STATE
+  const [isExpanded, setIsExpanded] = useState(false);
+
   // React Flow State
   const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-
-  // Selection & Inspector State
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
 
   // Video Player State
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
 
-  // --- MISSING FUNCTION: updateNodeData ---
+  // --- PREVIEW LOGIC HOOK ---
+  const previewState = usePreviewLogic(nodes, edges, activeNodeId);
+
+  // --- FUNCTION: updateNodeData ---
   const updateNodeData = useCallback((id: string, data: any) => {
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === id) {
-          return {
-            ...node,
-            data: { ...node.data, ...data },
-          };
+          return { ...node, data: { ...node.data, ...data } };
         }
         return node;
       })
@@ -390,126 +319,62 @@ function EditorApp() {
   // --- Processing Logic (Stitching) ---
   const handleProcessOutput = useCallback(async (nodeId: string) => {
     if (!projectId) return;
-
-    // Set processing flag
-    updateNodeData(nodeId, { isProcessing: true });
+    updateNodeData(nodeId, { isProcessing: true, processedUrl: undefined });
 
     try {
       const currentNodes = getNodes();
       const currentEdges = getEdges();
+      const renderNode = currentNodes.find(n => n.id === nodeId);
+      if (!renderNode) throw new Error("Render node not found");
 
-      // Get Output Node Data for Global Mix Settings
-      const outputNode = currentNodes.find(n => n.id === nodeId);
-      // @ts-ignore
-      const videoMixGain = outputNode?.data?.videoMixGain ?? 1.0;
-      // @ts-ignore
-      const audioMixGain = outputNode?.data?.audioMixGain ?? 1.0;
+      const renderData = renderNode.data as RenderNodeData;
+      const globalMix = {
+        videoMixGain: renderData.videoMixGain ?? 1.0,
+        audioMixGain: renderData.audioMixGain ?? 1.0
+      };
 
-      const videoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
-      const audioClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'audio-in', 'audio');
+      const rawVideoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
+      if (!rawVideoClips || rawVideoClips.length === 0) throw new Error("No video clips connected");
 
-      if (videoClips.length === 0) throw new Error("No video sequence connected to Video Input!");
+      const videoClips = rawVideoClips.map((clip: any) => ({
+        url: clip.url.replace(/^https?:\/\/[^/]+/, ''),
+        start: clip.start,
+        end: clip.end,
+        volume: clip.volume ?? 1.0,
+        playbackRate: clip.playbackRate ?? 1.0
+      }));
+
+      const rawAudioClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'audio-in', 'audio');
+      const audioClips = rawAudioClips.map((clip: any) => ({
+        url: clip.url.replace(/^https?:\/\/[^/]+/, ''),
+        start: clip.start,
+        end: clip.end,
+        volume: clip.volume ?? 1.0,
+        playbackRate: clip.playbackRate ?? 1.0
+      }));
 
       const response = await fetch(`http://localhost:3001/api/projects/${projectId}/render`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clips: videoClips,
-          audioClips,
-          globalMix: { videoMixGain, audioMixGain }
-        }),
+        body: JSON.stringify({ clips: videoClips, audioClips, globalMix }),
       });
 
       if (!response.ok) throw new Error('Render request failed');
-      const responseData = await response.json(); // Get response data for operationId
+      const responseData = await response.json();
 
-      // Poll for completion
-      const pollInterval = setInterval(async () => {
-        const p = await getProject(projectId);
-        const op = p.operations.find(o => o.id === responseData.operationId);
-
-        // Fix for "Property 'status' does not exist on type 'ProjectOperation'"
-        // Casting op to any to access dynamic properties returned by server
-        const safeOp = op as any;
-
-        if (safeOp && safeOp.status === 'completed') {
-          clearInterval(pollInterval);
-          updateNodeData(nodeId, { isProcessing: false, processedUrl: safeOp.result });
-        } else if (safeOp && safeOp.status === 'failed') {
-          clearInterval(pollInterval);
-          updateNodeData(nodeId, { isProcessing: false });
-          alert('Rendering Failed');
-        }
-      }, 1000);
-
+      if (responseData.url) {
+        updateNodeData(nodeId, { isProcessing: false, processedUrl: responseData.url });
+      } else {
+        updateNodeData(nodeId, { isProcessing: false });
+      }
     } catch (err: any) {
       console.error(err);
       updateNodeData(nodeId, { isProcessing: false });
-      alert("Failed to start processing");
+      alert("Error: " + err.message);
     }
   }, [projectId, getNodes, getEdges, updateNodeData]);
 
-  // --- Fast Preview Logic ---
-  const [previewQueue, setPreviewQueue] = React.useState<any[]>([]);
-  const [currentPreviewIndex, setCurrentPreviewIndex] = React.useState(-1);
-
-  const handleFastPreview = (nodeId: string | undefined) => {
-    if (!nodeId) return;
-    const currentNodes = getNodes();
-    const currentEdges = getEdges();
-    const videoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
-
-    if (videoClips.length === 0) {
-      alert("No clips to preview");
-      return;
-    }
-
-    setPreviewQueue(videoClips);
-    setCurrentPreviewIndex(0);
-
-    // Start playing first clip
-    if (videoRef.current) {
-      videoRef.current.src = videoClips[0].url as string;
-      videoRef.current.currentTime = videoClips[0].start as number;
-      videoRef.current.play();
-    }
-  };
-
-  // Handle Preview Queue Progression
-  React.useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handleTimeUpdate = () => {
-      if (currentPreviewIndex >= 0 && currentPreviewIndex < previewQueue.length) {
-        const clip = previewQueue[currentPreviewIndex];
-        const end = clip.end; // Duration or end offset
-
-        // Check if we reached the end of the clip segment
-        if (video.currentTime >= end) {
-          const nextIndex = currentPreviewIndex + 1;
-          if (nextIndex < previewQueue.length) {
-            // Play next clip
-            setCurrentPreviewIndex(nextIndex);
-            const nextClip = previewQueue[nextIndex];
-            video.src = nextClip.url as string;
-            video.currentTime = nextClip.start as number;
-            video.play();
-          } else {
-            // End of queue
-            setPreviewQueue([]);
-            setCurrentPreviewIndex(-1);
-            video.pause();
-          }
-        }
-      }
-    };
-
-    video.addEventListener('timeupdate', handleTimeUpdate);
-    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [previewQueue, currentPreviewIndex]);
-
-  // --- Hydration (Load Project) ---
+  // --- Hydration ---
   useEffect(() => {
     if (projectId) {
       setIsLoadingProject(true);
@@ -517,13 +382,10 @@ function EditorApp() {
         setProject(p);
         const assets = await getProjectAssets(projectId);
         setLibraryAssets(assets);
-
-        // Restore Editor State & Re-attach Functions
         if (p.editorState) {
           const hydratedNodes = (p.editorState.nodes || []).map((node: any) => {
-            if (node.type === 'output') {
-              // Vital: Re-attach the function so the button works
-              return { ...node, data: { ...node.data, onProcess: handleProcessOutput } };
+            if (node.type === 'render' || node.type === 'output') {
+              return { ...node, type: 'render', data: { ...node.data, onProcess: handleProcessOutput } };
             }
             return node;
           });
@@ -535,13 +397,28 @@ function EditorApp() {
     }
   }, [projectId, handleProcessOutput, setNodes, setEdges]);
 
+  // --- Auto-Save ---
+  const debouncedNodes = useDebounce(nodes, 1000);
+  const debouncedEdges = useDebounce(edges, 1000);
+  useEffect(() => {
+    if (!projectId || isLoadingProject) return;
+    if (debouncedNodes.length === 0 && debouncedEdges.length === 0) return;
+    const saveState = async () => {
+      setIsSaving(true);
+      try {
+        await updateProject(projectId, { editorState: { nodes: debouncedNodes, edges: debouncedEdges } });
+        setLastSaved(new Date());
+      } catch (e) { console.error(e); } finally { setIsSaving(false); }
+    };
+    saveState();
+  }, [debouncedNodes, debouncedEdges, projectId, isLoadingProject]);
+
   // --- Helpers ---
   const getActiveNode = useCallback(() => {
     if (!activeNodeId) return null;
     return nodes.find(n => n.id === activeNodeId) || null;
   }, [activeNodeId, nodes]);
 
-  // --- Event Handlers ---
   useOnSelectionChange({
     onChange: ({ nodes }) => {
       const selected = nodes[0];
@@ -565,39 +442,14 @@ function EditorApp() {
     if (type === 'asset') {
       const asset = payload as LibraryAsset;
       const duration = asset.duration || 10;
-      setNodes(nds => nds.concat({
-        id, type: 'clip', position,
-        data: {
-          label: asset.name,
-          url: `http://localhost:3001${asset.url}`,
-          filmstrip: asset.filmstrip,
-          thumbnailUrl: asset.thumbnailUrl,
-          sourceDuration: duration,
-          startOffset: 0,
-          endOffset: duration,
-        }
-      }));
+      setNodes(nds => nds.concat({ id, type: 'clip', position, data: { label: asset.name, url: `http://localhost:3001${asset.url}`, filmstrip: asset.filmstrip, thumbnailUrl: asset.thumbnailUrl, sourceDuration: duration, startOffset: 0, endOffset: duration, volume: 1.0, playbackRate: 1.0 } }));
     } else if (type === 'asset-audio') {
       const asset = payload as LibraryAsset;
-      const duration = asset.duration || 10;
-      setNodes(nds => nds.concat({
-        id, type: 'audio', position,
-        data: {
-          label: asset.name,
-          url: `http://localhost:3001${asset.url}`,
-          duration, startOffset: 0, endOffset: duration
-        }
-      }));
-    } else if (type === 'node-output') {
-      setNodes(nds => nds.concat({
-        id, type: 'output', position,
-        data: { label: 'Final Render', onProcess: handleProcessOutput }
-      }));
+      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: asset.name, url: `http://localhost:3001${asset.url}`, duration: asset.duration || 10, startOffset: 0, endOffset: asset.duration || 10 } }));
+    } else if (type === 'node-render') {
+      setNodes(nds => nds.concat({ id, type: 'render', position, data: { label: 'Final Render', onProcess: handleProcessOutput, videoMixGain: 1.0, audioMixGain: 1.0 } }));
     } else if (type === 'node-audio-empty') {
-      setNodes(nds => nds.concat({
-        id, type: 'audio', position,
-        data: { label: 'Empty Audio', url: '', duration: 10, startOffset: 0, endOffset: 10 }
-      }));
+      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: 'Empty Audio', url: '', duration: 10, startOffset: 0, endOffset: 10 } }));
     }
   }, [screenToFlowPosition, setNodes, handleProcessOutput]);
 
@@ -606,44 +458,29 @@ function EditorApp() {
     setIsSaving(true);
     setLastSaved(null);
     try {
-      // Note: We don't save 'onProcess' to JSON, handled by hydration
       await updateProject(projectId, { editorState: { nodes: getNodes(), edges: getEdges() } });
       setTimeout(() => { setIsSaving(false); setLastSaved(new Date()); }, 500);
     } catch (e) { console.error(e); setIsSaving(false); alert("Save failed"); }
   };
 
-  // Video Player Controls
-  const handlePlayPause = () => {
-    if (videoRef.current) {
-      if (videoRef.current.paused) { videoRef.current.play(); setIsPlaying(true); }
-      else { videoRef.current.pause(); setIsPlaying(false); }
-    }
-  };
-  const handleSeek = (time: number) => {
-    if (videoRef.current) { videoRef.current.currentTime = time; setCurrentTime(time); }
-  };
+  const handlePlayPause = () => setIsPlaying(!isPlaying);
+  const handleSeek = (time: number) => setCurrentTime(time);
+
   const handleSplit = () => {
     const active = getActiveNode();
     if (!active || active.type !== 'clip') return;
     const clipData = active.data as ClipData;
-    const splitTime = currentTime;
-
-    if (splitTime <= clipData.startOffset + 0.1 || splitTime >= clipData.endOffset - 0.1) {
-      alert("Cannot split too close to edge"); return;
-    }
-
-    const leftNode: ClipNode = { ...active, id: crypto.randomUUID(), data: { ...clipData, endOffset: splitTime } };
-    const rightNode: ClipNode = { ...active, id: crypto.randomUUID(), position: { x: active.position.x + 350, y: active.position.y }, data: { ...clipData, startOffset: splitTime } };
-
-    // Update graph with split nodes and reconnect edges... (Simplified logic for brevity)
+    const splitTime = clipData.startOffset + currentTime;
+    if (splitTime <= clipData.startOffset + 0.1 || splitTime >= clipData.endOffset - 0.1) { alert("Cannot split too close to edge"); return; }
+    const leftNode: ClipNodeType = { ...active, id: crypto.randomUUID(), data: { ...clipData, endOffset: splitTime } };
+    const rightNode: ClipNodeType = { ...active, id: crypto.randomUUID(), position: { x: active.position.x + 350, y: active.position.y }, data: { ...clipData, startOffset: splitTime } };
     setNodes(nds => nds.filter(n => n.id !== active.id).concat([leftNode, rightNode]));
-    // Note: Reconnecting edges logic omitted for brevity, similar to previous implementation
   };
 
   if (isLoadingProject || !projectId) return <div className="text-white flex items-center justify-center h-full">Loading Project...</div>;
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans">
+    <div className="flex flex-col h-full w-full bg-[#050505] text-white overflow-hidden font-sans relative">
       <TopBar
         activeNode={getActiveNode()}
         onOpenUploadModal={() => setIsUploadModalOpen(true)}
@@ -655,7 +492,7 @@ function EditorApp() {
         lastSaved={lastSaved}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
         <LibraryPanel
           assets={libraryAssets}
           onOpenUploadModal={() => setIsUploadModalOpen(true)}
@@ -682,8 +519,19 @@ function EditorApp() {
           </ReactFlow>
         </div>
 
-        {/* Right Sidebar: Context-Aware Inspector */}
-        <div className="w-[450px] bg-[#000] border-l border-white/5 flex flex-col z-20 shadow-2xl relative transition-all overflow-hidden">
+        {/* 
+            RIGHT SIDEBAR CONTAINER
+            This uses dynamic CSS classes to pop out into "Cinema Mode" 
+        */}
+        <div
+          className={`
+                bg-[#000] border-l border-white/5 flex flex-col z-40 shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)]
+                ${isExpanded
+              ? 'fixed inset-4 w-auto h-auto rounded-2xl border border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.8)] z-50'
+              : 'relative w-[450px] h-full'
+            }
+            `}
+        >
           {(() => {
             const activeNode = getActiveNode();
 
@@ -699,54 +547,36 @@ function EditorApp() {
               );
             }
 
-            // 2. Video Inspector (Unified for Clips, Outputs, and General Preview)
-            let videoSrc = '';
-            let activeNodeType: 'clip' | 'output' | 'audio' | 'default' = 'default';
-
-            if (activeNode?.type === 'output') {
-              activeNodeType = 'output';
-              // @ts-ignore
-              if (activeNode.data.processedUrl) videoSrc = `http://localhost:3001${activeNode.data.processedUrl}`;
-            } else if (activeNode?.type === 'clip') {
-              activeNodeType = 'clip';
-              // @ts-ignore
-              videoSrc = activeNode.data.url;
-            } else if (activeNode?.type === 'audio') {
-              activeNodeType = 'audio';
-            } else if (videoRef.current) {
-              // Preserve current playback if Deselecting
-              videoSrc = videoRef.current.src;
-            }
-
+            // 2. Video Inspector (Unified)
             return (
               <VideoInspector
                 videoRef={videoRef}
-                src={videoSrc}
+                previewState={previewState}
                 isPlaying={isPlaying}
                 currentTime={currentTime}
-                duration={duration}
-                activeNodeId={activeNodeId}
-                activeNodeType={activeNodeType}
-                data={activeNode?.data}
-                onUpdateNode={updateNodeData}
                 onPlayPause={handlePlayPause}
                 onSeek={handleSeek}
                 onSplit={handleSplit}
-                onTimeUpdate={() => { if (videoRef.current) setCurrentTime(videoRef.current.currentTime); }}
-                onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
-                // Output Props
-                // @ts-ignore
-                isProcessing={activeNode?.data?.isProcessing}
-                // @ts-ignore
-                processedUrl={activeNode?.data?.processedUrl}
-                // @ts-ignore
+                onTimeUpdate={(time) => setCurrentTime(time)}
+                onUpdateNode={updateNodeData}
+                isProcessing={(activeNode?.data as any)?.isProcessing}
+                processedUrl={(activeNode?.data as any)?.processedUrl}
                 onProcess={() => activeNode?.id && handleProcessOutput(activeNode.id)}
-                onFastPreview={() => handleFastPreview(activeNode?.id)}
+
+                // Expansion Props
+                isExpanded={isExpanded}
+                onToggleExpand={() => setIsExpanded(!isExpanded)}
               />
             );
           })()}
         </div>
       </div>
+
+      {/* Background Dimmer when expanded */}
+      {isExpanded && (
+        <div className="fixed inset-0 bg-black/80 z-40 backdrop-blur-sm transition-opacity duration-300" onClick={() => setIsExpanded(false)} />
+      )}
+
       <AddAssetModal isOpen={isUploadModalOpen} onClose={() => setIsUploadModalOpen(false)} projectId={projectId} onAssetAdded={(newAssets: LibraryAsset[]) => setLibraryAssets(newAssets)} />
     </div>
   );

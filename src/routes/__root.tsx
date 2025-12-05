@@ -1,6 +1,6 @@
 import { createRootRoute, Outlet, Link, useLocation } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Home, Scissors, Clapperboard, MessageSquare, ChevronLeft, ChevronRight, Menu } from 'lucide-react'
+import { Home, Clapperboard, MessageSquare, ChevronLeft, ChevronRight, Menu } from 'lucide-react'
 
 export const Route = createRootRoute({
     component: RootLayout,
@@ -17,7 +17,6 @@ function RootLayout() {
 
     const navItems = [
         { to: '/', icon: <Home size={20} />, label: 'Dashboard', requiresProject: false },
-        { to: '/cutter', icon: <Scissors size={20} />, label: 'Cutter', requiresProject: true },
         { to: '/editor', icon: <Clapperboard size={20} />, label: 'Editor', requiresProject: true },
         { to: '/subtitles', icon: <MessageSquare size={20} />, label: 'Subtitles', requiresProject: true },
     ];

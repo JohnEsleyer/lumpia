@@ -28,24 +28,6 @@ function ProjectOverview() {
 
   const tools = [
     {
-      id: 'cutter',
-      title: "Cutter",
-      desc: "Trim & Cut",
-      icon: "✂️",
-      to: "/cutter",
-      color: "bg-blue-500",
-      gradient: "from-blue-600/20 to-blue-600/5 hover:border-blue-500/50"
-    },
-    {
-      id: 'stitcher',
-      title: "Stitcher",
-      desc: "Join Clips",
-      icon: "🧵",
-      to: "/stitcher",
-      color: "bg-purple-500",
-      gradient: "from-purple-600/20 to-purple-600/5 hover:border-purple-500/50"
-    },
-    {
       id: 'editor',
       title: "Editor",
       desc: "Timeline",

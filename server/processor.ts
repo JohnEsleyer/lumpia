@@ -27,7 +27,7 @@ const getAbsolutePath = (projectId: string, url: string) => {
     return path.join(__dirname, 'projects', cleanUrl);
 };
 
-export async function processOperation(project: Project, operation: ProjectOperation): Promise<string> {
+export async function processOperation(project: Project, operation: ProjectOperation, onProgress?: (progress: number) => void): Promise<string> {
     // Stitch operations combine multiple assets, so they don't strictly need a 'currentHead'
     if (!project.currentHead && operation.type !== 'stitch') {
         throw new Error("Project has no current video head to process");
@@ -57,12 +57,23 @@ export async function processOperation(project: Project, operation: ProjectOpera
         // (Stitch creates its own specific commands inside its block)
         const command = ffmpeg(absoluteInputPath);
 
+        // Helper for single-pass FFmpeg progress
+        const handleSinglePassProgress = (p: any) => {
+            if (onProgress && p.percent) {
+                onProgress(Math.min(99, Math.round(p.percent)));
+            }
+        };
+
         // --- 1. TRIM OPERATION ---
         if (operation.type === 'trim') {
             const { start, end } = operation.params;
             command.setStartTime(start).setDuration(end - start)
                 .output(absoluteOutputPath)
-                .on('end', () => resolve(`/projects/${project.id}/artifacts/${outputFileName}`))
+                .on('progress', handleSinglePassProgress)
+                .on('end', () => {
+                    if (onProgress) onProgress(100);
+                    resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
+                })
                 .on('error', reject).run();
 
             // --- 2. TEXT OVERLAY OPERATION ---
@@ -72,7 +83,11 @@ export async function processOperation(project: Project, operation: ProjectOpera
             const filterString = `drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)*${x}/100:y=(h-text_h)*${y}/100`;
             command.videoFilters([filterString])
                 .output(absoluteOutputPath)
-                .on('end', () => resolve(`/projects/${project.id}/artifacts/${outputFileName}`))
+                .on('progress', handleSinglePassProgress)
+                .on('end', () => {
+                    if (onProgress) onProgress(100);
+                    resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
+                })
                 .on('error', reject).run();
 
             // --- 3. SUBTITLE BURN-IN OPERATION ---
@@ -92,9 +107,11 @@ export async function processOperation(project: Project, operation: ProjectOpera
             command
                 .videoFilters(`subtitles='${srtUrl}':force_style='${style}'`)
                 .output(absoluteOutputPath)
+                .on('progress', handleSinglePassProgress)
                 .on('end', async () => {
                     console.log('Subtitle burn-in finished');
                     await fs.unlink(srtPath).catch(() => { });
+                    if (onProgress) onProgress(100);
                     resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
                 })
                 .on('error', (err) => {
@@ -116,9 +133,26 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
             const tempFiles: string[] = [];
 
+            // Progress Weighting
+            // Video Clips: 50%
+            // Audio Clips: 10%
+            // Final Mix: 40%
+            let currentProgress = 0;
+            const updateStitchProgress = (stageBase: number, stageWeight: number, percent: number) => {
+                if (onProgress) {
+                    const p = stageBase + (stageWeight * (percent / 100));
+                    if (p > currentProgress) {
+                        currentProgress = p;
+                        onProgress(Math.min(99, Math.round(currentProgress)));
+                    }
+                }
+            };
+
             try {
                 // --- STEP 4A: PROCESS VIDEO CLIPS ---
                 const processedVideoParts: string[] = [];
+                const totalVideoClips = clips.length;
+                const videoStageWeight = 50;
 
                 for (let i = 0; i < clips.length; i++) {
                     const clip = clips[i];
@@ -129,6 +163,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     try { await fs.access(inputPath); }
                     catch { throw new Error(`Video file not found: ${inputPath}`); }
 
+                    // Calculate Duration based on Source Trimming
                     let duration = clip.end - clip.start;
                     if (duration < 0.1) duration = 0.1;
 
@@ -136,17 +171,27 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     const speed = clip.playbackRate || 1.0;
                     const volume = clip.volume !== undefined ? clip.volume : 1.0;
 
-                    // FFmpeg setpts filter for speed (inverse relationship: 2x speed = 0.5*PTS)
+                    // FFmpeg Filters
+                    // 1. setpts (Video Speed): Inverse. 2x speed means frames displayed for 0.5x time.
+                    // 2. atempo (Audio Speed): Direct. 2x speed means 2x tempo.
+                    //    Limitation: atempo limited to 0.5-2.0. We chain them if outside range, but for simplicity assuming 0.5-2.0 here.
                     const videoFilter = `setpts=${1 / speed}*PTS`;
-                    // FFmpeg atempo filter for audio speed (limited to 0.5 to 2.0 range per pass, chaining needed for more but keeping simple)
-                    // Also applying volume filter
-                    const audioFilter = `atempo=${speed},volume=${volume}`;
+
+                    // Simple logic for atempo chaining if speed > 2 or < 0.5 (basic implementation)
+                    let audioFilter = '';
+                    if (speed >= 0.5 && speed <= 2.0) {
+                        audioFilter = `atempo=${speed},volume=${volume}`;
+                    } else if (speed > 2.0) {
+                        audioFilter = `atempo=2.0,atempo=${speed / 2},volume=${volume}`;
+                    } else {
+                        audioFilter = `atempo=0.5,atempo=${speed * 2},volume=${volume}`;
+                    }
 
                     // Trim and Normalize (important for concatenation)
                     await new Promise<void>((res, rej) => {
                         ffmpeg(inputPath)
                             .setStartTime(clip.start)
-                            .setDuration(duration)
+                            .setDuration(duration) // This is duration *before* speed change
                             .outputOptions([
                                 '-c:v libx264', '-preset ultrafast', '-crf 23', // Standardize video
                                 '-c:a aac', '-ar 44100', '-ac 2',               // Standardize audio
@@ -154,7 +199,17 @@ export async function processOperation(project: Project, operation: ProjectOpera
                                 `-filter:a ${audioFilter}`
                             ])
                             .output(tempPath)
-                            .on('end', () => res())
+                            .on('progress', (p) => {
+                                const clipWeight = videoStageWeight / totalVideoClips;
+                                const clipBase = (i * clipWeight);
+                                const percent = p.percent || 0;
+                                updateStitchProgress(0, 1, clipBase + (clipWeight * (percent / 100)));
+                            })
+                            .on('end', () => {
+                                const clipWeight = videoStageWeight / totalVideoClips;
+                                updateStitchProgress(0, 1, (i + 1) * clipWeight);
+                                res();
+                            })
                             .on('error', rej)
                             .run();
                     });
@@ -173,9 +228,12 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
                 // --- STEP 4B: PROCESS AUDIO CLIPS (If any) ---
                 let audioTrackPath: string | null = null;
+                const audioStageWeight = 10;
+                const currentBase = videoStageWeight;
 
                 if (audioClips.length > 0) {
                     const processedAudioParts: string[] = [];
+                    const totalAudioClips = audioClips.length;
 
                     for (let i = 0; i < audioClips.length; i++) {
                         const clip = audioClips[i];
@@ -200,7 +258,17 @@ export async function processOperation(project: Project, operation: ProjectOpera
                                     `-filter:a volume=${volume}`
                                 ])
                                 .output(tempPath)
-                                .on('end', () => res())
+                                .on('progress', (p) => {
+                                    const clipWeight = audioStageWeight / totalAudioClips;
+                                    const clipBase = currentBase + (i * clipWeight);
+                                    const percent = p.percent || 0;
+                                    updateStitchProgress(0, 1, clipBase + (clipWeight * (percent / 100)));
+                                })
+                                .on('end', () => {
+                                    const clipWeight = audioStageWeight / totalAudioClips;
+                                    updateStitchProgress(0, 1, currentBase + ((i + 1) * clipWeight));
+                                    res();
+                                })
                                 .on('error', rej)
                                 .run();
                         });
@@ -227,10 +295,15 @@ export async function processOperation(project: Project, operation: ProjectOpera
                             .run();
                     });
                     tempFiles.push(audioTrackPath);
+                } else {
+                    // Skip audio stage progress
+                    updateStitchProgress(0, 1, currentBase + audioStageWeight);
                 }
 
 
                 // --- STEP 4C: FINAL MIX (Video + Audio) ---
+                const mixStageWeight = 40;
+                const mixBase = videoStageWeight + audioStageWeight;
 
                 // Scenario 1: Video only (No audio clips added)
                 if (!audioTrackPath) {
@@ -249,6 +322,10 @@ export async function processOperation(project: Project, operation: ProjectOpera
                                     `-filter:a volume=${globalMix.videoMixGain}`
                                 ])
                                 .output(absoluteOutputPath)
+                                .on('progress', (p) => {
+                                    const percent = p.percent || 0;
+                                    updateStitchProgress(mixBase, mixStageWeight, percent);
+                                })
                                 .on('end', () => res())
                                 .on('error', rej)
                                 .run();
@@ -260,6 +337,11 @@ export async function processOperation(project: Project, operation: ProjectOpera
                                 .inputOptions(['-f concat', '-safe 0'])
                                 .outputOptions(['-c copy']) // Fast stream copy
                                 .output(absoluteOutputPath)
+                                .on('progress', (p) => {
+                                    // Copy is fast, but we can still track it
+                                    const percent = p.percent || 0;
+                                    updateStitchProgress(mixBase, mixStageWeight, percent);
+                                })
                                 .on('end', () => res())
                                 .on('error', rej)
                                 .run();
@@ -272,12 +354,20 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     const concatenatedVideoPath = path.join(outputDir, `concat_video_${Date.now()}.mp4`);
                     tempFiles.push(concatenatedVideoPath);
 
+                    // We split mix stage into 2 sub-steps: Concat Video (10%) + Final Mix (30%)
+                    const concatWeight = 10;
+                    const finalMixWeight = 30;
+
                     await new Promise<void>((res, rej) => {
                         ffmpeg()
                             .input(videoListFile)
                             .inputOptions(['-f concat', '-safe 0'])
                             .outputOptions(['-c copy'])
                             .output(concatenatedVideoPath)
+                            .on('progress', (p) => {
+                                const percent = p.percent || 0;
+                                updateStitchProgress(mixBase, concatWeight, percent);
+                            })
                             .on('end', () => res())
                             .on('error', rej)
                             .run();
@@ -306,6 +396,10 @@ export async function processOperation(project: Project, operation: ProjectOpera
                                 '-b:a 192k'
                             ])
                             .output(absoluteOutputPath)
+                            .on('progress', (p) => {
+                                const percent = p.percent || 0;
+                                updateStitchProgress(mixBase + concatWeight, finalMixWeight, percent);
+                            })
                             .on('end', () => res())
                             .on('error', rej)
                             .run();
@@ -316,6 +410,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 // Attempt to delete all temporary files
                 await Promise.allSettled(tempFiles.map(f => fs.unlink(f)));
 
+                if (onProgress) onProgress(100);
                 resolve(`/projects/${project.id}/artifacts/${outputFileName}`);
 
             } catch (err) {
