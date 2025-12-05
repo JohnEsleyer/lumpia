@@ -20,7 +20,6 @@ interface VideoInspectorProps {
     processedUrl?: string;
     onProcess?: () => void;
 
-    // --- ADDED MISSING PROPS ---
     isExpanded?: boolean;
     onToggleExpand?: () => void;
 }
@@ -47,6 +46,7 @@ export const VideoInspector: React.FC<VideoInspectorProps> = ({
     const [viewMode, setViewMode] = useState<'preview' | 'result'>('preview');
 
     useEffect(() => {
+        // Reset to preview mode when selecting a different node
         setViewMode('preview');
     }, [activeNodeId]);
 
@@ -169,45 +169,50 @@ export const VideoInspector: React.FC<VideoInspectorProps> = ({
                                     <Settings2 size={12} /> Global Mix & Output
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase">
-                                            <span>Video Vol</span>
-                                            <span>{Math.round((mix.videoGain ?? 1) * 100)}%</span>
+                                {/* Conditionally Render Mix Controls based on View Mode */}
+                                {viewMode === 'preview' && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase">
+                                                <span>Video Vol</span>
+                                                <span>{Math.round((mix.videoGain ?? 1) * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range" min="0" max="1.5" step="0.1"
+                                                value={mix.videoGain ?? 1}
+                                                onChange={handleVideoGainChange}
+                                                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400"
+                                            />
                                         </div>
-                                        <input
-                                            type="range" min="0" max="1.5" step="0.1"
-                                            value={mix.videoGain ?? 1}
-                                            onChange={handleVideoGainChange}
-                                            className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase">
-                                            <span>Audio Vol</span>
-                                            <span>{Math.round((mix.audioGain ?? 1) * 100)}%</span>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase">
+                                                <span>Audio Vol</span>
+                                                <span>{Math.round((mix.audioGain ?? 1) * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range" min="0" max="1.5" step="0.1"
+                                                value={mix.audioGain ?? 1}
+                                                onChange={handleAudioGainChange}
+                                                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500 hover:accent-emerald-400"
+                                            />
                                         </div>
-                                        <input
-                                            type="range" min="0" max="1.5" step="0.1"
-                                            value={mix.audioGain ?? 1}
-                                            onChange={handleAudioGainChange}
-                                            className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500 hover:accent-emerald-400"
-                                        />
                                     </div>
-                                </div>
+                                )}
 
                                 <div className="grid grid-cols-1 gap-2 pt-2">
-                                    <Button
-                                        onClick={onProcess}
-                                        className={`h-9 font-bold flex items-center justify-center gap-2 text-xs
-                                            ${processedUrl
-                                                ? 'bg-slate-700 hover:bg-slate-600'
-                                                : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/20'
-                                            }`}
-                                    >
-                                        {processedUrl ? <RotateCcw size={14} /> : <Play size={14} fill="currentColor" />}
-                                        {processedUrl ? 'Re-Process Full Video' : 'Process Full Video'}
-                                    </Button>
+                                    {viewMode === 'preview' && (
+                                        <Button
+                                            onClick={onProcess}
+                                            className={`h-9 font-bold flex items-center justify-center gap-2 text-xs
+                                                ${processedUrl
+                                                    ? 'bg-slate-700 hover:bg-slate-600'
+                                                    : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/20'
+                                                }`}
+                                        >
+                                            {processedUrl ? <RotateCcw size={14} /> : <Play size={14} fill="currentColor" />}
+                                            {processedUrl ? 'Re-Process Full Video' : 'Process Full Video'}
+                                        </Button>
+                                    )}
 
                                     {processedUrl && (
                                         <Button
