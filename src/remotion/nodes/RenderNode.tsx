@@ -8,8 +8,6 @@ export type RenderNodeData = {
     processedUrl?: string;
     isProcessing?: boolean;
     onProcess?: (nodeId: string) => void;
-    videoMixGain?: number;
-    audioMixGain?: number;
 };
 
 export type RenderNodeType = Node<RenderNodeData>;
@@ -26,8 +24,6 @@ export const RenderNode = ({ id, data, selected }: NodeProps<RenderNodeType>) =>
         e.stopPropagation();
         if (data.onProcess) {
             data.onProcess(id);
-        } else {
-            console.error("onProcess function is missing. Hydration failed.");
         }
     };
 
@@ -79,7 +75,7 @@ export const RenderNode = ({ id, data, selected }: NodeProps<RenderNodeType>) =>
                         </div>
                     ) : (
                         <div className="space-y-2">
-                            <div className="text-[10px] text-slate-500 text-center italic">Connect clips & audio</div>
+                            <div className="text-[10px] text-slate-500 text-center italic">Connect video & audio clips</div>
                             <Button
                                 onClick={handleProcessClick}
                                 className="w-full h-9 bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-900/20 text-xs font-bold uppercase tracking-wide transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -92,8 +88,6 @@ export const RenderNode = ({ id, data, selected }: NodeProps<RenderNodeType>) =>
             </div>
 
             {/* --- HANDLERS (Left Side) --- */}
-
-            {/* Video Input Handle */}
             <div className="absolute -left-3 top-8 flex items-center group/handle z-50">
                 <div className="relative">
                     <Handle
@@ -102,14 +96,12 @@ export const RenderNode = ({ id, data, selected }: NodeProps<RenderNodeType>) =>
                         id="video-in"
                         className="!w-4 !h-4 !bg-blue-500 !border-2 !border-[#0a0a0a] hover:!bg-white hover:!scale-125 transition-all cursor-crosshair shadow-[0_0_10px_rgba(59,130,246,0.5)]"
                     />
-                    {/* Tooltip */}
                     <div className="absolute left-6 top-1/2 -translate-y-1/2 bg-black/90 text-blue-400 text-[9px] font-bold px-2 py-1 rounded border border-blue-500/30 opacity-0 group-hover/handle:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                        <div className="flex items-center gap-1"><Video size={10} /> CLIP SEQUENCE</div>
+                        VIDEO SEQUENCE
                     </div>
                 </div>
             </div>
 
-            {/* Audio Input Handle */}
             <div className="absolute -left-3 top-20 flex items-center group/handle z-50">
                 <div className="relative">
                     <Handle
@@ -118,13 +110,11 @@ export const RenderNode = ({ id, data, selected }: NodeProps<RenderNodeType>) =>
                         id="audio-in"
                         className="!w-4 !h-4 !bg-emerald-500 !border-2 !border-[#0a0a0a] hover:!bg-white hover:!scale-125 transition-all cursor-crosshair shadow-[0_0_10px_rgba(16,185,129,0.5)]"
                     />
-                    {/* Tooltip */}
                     <div className="absolute left-6 top-1/2 -translate-y-1/2 bg-black/90 text-emerald-400 text-[9px] font-bold px-2 py-1 rounded border border-emerald-500/30 opacity-0 group-hover/handle:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                        <div className="flex items-center gap-1"><Music size={10} /> AUDIO MIX</div>
+                        AUDIO MIX
                     </div>
                 </div>
             </div>
-
         </div>
     );
 };

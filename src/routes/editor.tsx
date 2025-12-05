@@ -14,13 +14,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
-  Download,
   ChevronLeft,
   ChevronRight,
   FlaskConical,
   Clapperboard,
   Layers,
-  Save,
   FileAudio,
   Music,
   Plus
@@ -95,7 +93,7 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-// --- Library Panel (Updated for Grid View) ---
+// --- Library Panel ---
 const LibraryPanel = ({
   assets,
   onOpenUploadModal,
@@ -327,10 +325,10 @@ function EditorApp() {
       const renderNode = currentNodes.find(n => n.id === nodeId);
       if (!renderNode) throw new Error("Render node not found");
 
-      const renderData = renderNode.data as RenderNodeData;
+      // Removed Global Mix UI controls, but defaulting to 1.0 for backend compatibility
       const globalMix = {
-        videoMixGain: renderData.videoMixGain ?? 1.0,
-        audioMixGain: renderData.audioMixGain ?? 1.0
+        videoMixGain: 1.0,
+        audioMixGain: 1.0
       };
 
       const rawVideoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
@@ -445,11 +443,11 @@ function EditorApp() {
       setNodes(nds => nds.concat({ id, type: 'clip', position, data: { label: asset.name, url: `http://localhost:3001${asset.url}`, filmstrip: asset.filmstrip, thumbnailUrl: asset.thumbnailUrl, sourceDuration: duration, startOffset: 0, endOffset: duration, volume: 1.0, playbackRate: 1.0 } }));
     } else if (type === 'asset-audio') {
       const asset = payload as LibraryAsset;
-      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: asset.name, url: `http://localhost:3001${asset.url}`, duration: asset.duration || 10, startOffset: 0, endOffset: asset.duration || 10 } }));
+      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: asset.name, url: `http://localhost:3001${asset.url}`, duration: asset.duration || 10, startOffset: 0, endOffset: asset.duration || 10, volume: 1.0 } }));
     } else if (type === 'node-render') {
-      setNodes(nds => nds.concat({ id, type: 'render', position, data: { label: 'Final Render', onProcess: handleProcessOutput, videoMixGain: 1.0, audioMixGain: 1.0 } }));
+      setNodes(nds => nds.concat({ id, type: 'render', position, data: { label: 'Final Render', onProcess: handleProcessOutput } }));
     } else if (type === 'node-audio-empty') {
-      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: 'Empty Audio', url: '', duration: 10, startOffset: 0, endOffset: 10 } }));
+      setNodes(nds => nds.concat({ id, type: 'audio', position, data: { label: 'Empty Audio', url: '', duration: 10, startOffset: 0, endOffset: 10, volume: 1.0 } }));
     }
   }, [screenToFlowPosition, setNodes, handleProcessOutput]);
 
@@ -566,6 +564,9 @@ function EditorApp() {
                 // Expansion Props
                 isExpanded={isExpanded}
                 onToggleExpand={() => setIsExpanded(!isExpanded)}
+
+                // Project Dimensions for Player Aspect Ratio
+                projectDimensions={project ? { width: project.width, height: project.height } : undefined}
               />
             );
           })()}

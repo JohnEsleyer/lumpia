@@ -1,19 +1,16 @@
-import { useMemo } from 'react';
+
 import { type Node, type Edge } from '@xyflow/react';
 import { getSequenceFromHandle } from '../utils/graphUtils';
+import { useMemo } from 'react';
 
 export interface PreviewClip {
     id: string;
     url: string;
-    // Source Trimming
     start: number;
     end: number;
-    // Playback Props
     volume: number;
     playbackRate: number;
     label?: string;
-
-    // Calculated Timeline Props
     timelineStart: number;
     timelineDuration: number;
 }
@@ -23,7 +20,6 @@ export interface PreviewState {
     clips: PreviewClip[];
     audioClips: PreviewClip[];
     totalDuration: number;
-    mix: { videoGain: number; audioGain: number };
     activeNodeId: string | null;
     activeNodeType: string | null;
 }
@@ -39,7 +35,6 @@ export const usePreviewLogic = (
             clips: [],
             audioClips: [],
             totalDuration: 0,
-            mix: { videoGain: 1, audioGain: 1 },
             activeNodeId,
             activeNodeType: null
         };
@@ -78,7 +73,6 @@ export const usePreviewLogic = (
             const videoDuration = clips.reduce((acc, c) => acc + c.timelineDuration, 0);
             const audioDuration = audioClips.reduce((acc, c) => acc + c.timelineDuration, 0);
 
-            // If we have video, it dictates the length. If only audio, use audio length.
             const totalDuration = videoDuration > 0 ? videoDuration : audioDuration;
 
             return {
@@ -86,10 +80,6 @@ export const usePreviewLogic = (
                 clips,
                 audioClips,
                 totalDuration,
-                mix: {
-                    videoGain: (activeNode.data as any)?.videoMixGain ?? 1.0,
-                    audioGain: (activeNode.data as any)?.audioMixGain ?? 1.0
-                },
                 activeNodeId,
                 activeNodeType: 'render'
             };
@@ -119,13 +109,12 @@ export const usePreviewLogic = (
                 clips: [clip],
                 audioClips: [],
                 totalDuration: timelineDuration,
-                mix: { videoGain: 1, audioGain: 1 },
                 activeNodeId,
                 activeNodeType: 'clip'
             };
         }
 
-        // --- SCENARIO C: AUDIO NODE (Direct Preview) ---
+        // --- SCENARIO C: AUDIO NODE ---
         if (activeNode.type === 'audio') {
             const data = activeNode.data as any;
             const sourceDuration = data.endOffset - data.startOffset;
@@ -144,10 +133,9 @@ export const usePreviewLogic = (
 
             return {
                 previewType: 'clip',
-                clips: [], // No video
+                clips: [],
                 audioClips: [clip],
                 totalDuration: sourceDuration,
-                mix: { videoGain: 1, audioGain: 1 },
                 activeNodeId,
                 activeNodeType: 'audio'
             };
