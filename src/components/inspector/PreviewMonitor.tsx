@@ -1,5 +1,5 @@
 import React, { useRef, useMemo, useEffect, useState } from 'react';
-import { Play, Pause, MonitorPlay, Scissors, RotateCcw, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import { Play, Pause, MonitorPlay, Scissors, RotateCcw, ChevronDown, ChevronUp, Maximize2, Minimize2, Music } from 'lucide-react';
 import type { PreviewState } from '../../hooks/usePreviewLogic';
 
 interface PreviewMonitorProps {
@@ -13,8 +13,6 @@ interface PreviewMonitorProps {
     onSplit?: () => void;
     viewMode?: 'preview' | 'result';
     processedUrl?: string;
-
-    // Expansion props
     isExpanded?: boolean;
     onToggleExpand?: () => void;
 }
@@ -87,8 +85,6 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         if (!primary || !secondary) return;
 
         if (primary.src !== clip.url) { primary.src = clip.url; primary.load(); }
-
-        // Video Clips use 'videoGain' slider
         primary.volume = (clip.volume ?? 1) * (previewState.mix?.videoGain ?? 1);
         primary.playbackRate = clip.playbackRate ?? 1.0;
 
@@ -110,16 +106,29 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         if (activeAudioClipInfo && primary && secondary) {
             const { clip, sourceTime, nextClip } = activeAudioClipInfo;
 
-            if (primary.src !== clip.url) { primary.src = clip.url; primary.load(); }
+            // Only update src if it changed to avoid reloading
+            // We use encodeURI to safely compare potentially weird filenames
+            const currentSrc = primary.currentSrc || primary.src;
+            if (!currentSrc.includes(encodeURI(clip.url)) && primary.src !== clip.url) {
+                primary.src = clip.url;
+                primary.load();
+            }
 
-            // Audio Clips use 'audioGain' slider
             primary.volume = (clip.volume ?? 1) * (previewState.mix?.audioGain ?? 1);
             primary.playbackRate = clip.playbackRate ?? 1.0;
 
             if (Math.abs(primary.currentTime - sourceTime) > 0.3) { primary.currentTime = sourceTime; }
 
             if (isPlaying && !isEnded) {
-                if (primary.paused) primary.play().catch(() => { });
+                if (primary.paused) {
+                    const playPromise = primary.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(error => {
+                            // Auto-play was prevented
+                            console.warn("Audio playback prevented:", error);
+                        });
+                    }
+                }
             } else {
                 if (!primary.paused) primary.pause();
             }
@@ -131,32 +140,43 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                     secondary.load();
                     secondary.currentTime = nextClip.start;
                 }
-            } else {
-                if (secondary.src) { secondary.removeAttribute('src'); secondary.load(); }
             }
         } else {
-            // Stop audio if no active clip
+            // Silence if no active audio clip
             if (audioA.current && !audioA.current.paused) audioA.current.pause();
             if (audioB.current && !audioB.current.paused) audioB.current.pause();
         }
     }, [activeAudioClipInfo, isPlaying, previewState.mix, viewMode, isEnded]);
 
-    const handleVideoTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-        if (viewMode === 'result' || !activeClipInfo) return;
-        if (e.currentTarget !== (activeClipInfo.activeBuffer === 'A' ? videoA.current : videoB.current)) return;
-        const video = e.currentTarget;
-        const progressInClip = video.currentTime - activeClipInfo.clip.start;
-        const timelineProgress = progressInClip / activeClipInfo.clip.playbackRate;
-        let newGlobalTime = activeClipInfo.clip.timelineStart + timelineProgress;
-        if (newGlobalTime >= totalDuration) { newGlobalTime = totalDuration; if (isPlaying) onPlayPause(); }
-        onTimeUpdate(newGlobalTime);
-    };
+    // --- Driver Logic (Master Clock) ---
+    // If we have video, video updates the clock. If we ONLY have audio, we need audio to update the clock.
+    const handleMediaTimeUpdate = (e: React.SyntheticEvent<HTMLMediaElement>, type: 'video' | 'audio', buffer: 'A' | 'B') => {
+        if (viewMode === 'result') return;
 
-    const handleVideoEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-        if (viewMode === 'result' || !activeClipInfo) return;
-        if (e.currentTarget !== (activeClipInfo.activeBuffer === 'A' ? videoA.current : videoB.current)) return;
-        const nextTime = activeClipInfo.clip.timelineStart + activeClipInfo.clip.timelineDuration;
-        if (nextTime >= totalDuration) { onTimeUpdate(totalDuration); onPlayPause(); } else { onTimeUpdate(nextTime + 0.001); }
+        // Decide who drives the clock
+        const isVideoDriver = clips.length > 0;
+        const isAudioDriver = !isVideoDriver && audioClips.length > 0;
+
+        if (type === 'video' && !isVideoDriver) return;
+        if (type === 'audio' && !isAudioDriver) return;
+
+        // Check if this specific element is the active one
+        const activeInfo = type === 'video' ? activeClipInfo : activeAudioClipInfo;
+        if (!activeInfo || activeInfo.activeBuffer !== buffer) return;
+
+        const media = e.currentTarget;
+        const progressInClip = media.currentTime - activeInfo.clip.start;
+        const timelineProgress = progressInClip / activeInfo.clip.playbackRate;
+
+        let newGlobalTime = activeInfo.clip.timelineStart + timelineProgress;
+
+        // Sync protection
+        if (newGlobalTime >= totalDuration) {
+            newGlobalTime = totalDuration;
+            if (isPlaying) onPlayPause();
+        }
+
+        onTimeUpdate(newGlobalTime);
     };
 
     const handleTransportClick = () => {
@@ -186,20 +206,30 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     return (
         <div className={`flex flex-col h-full bg-black select-none group relative ${isExpanded ? 'rounded-2xl overflow-hidden' : ''}`}>
             <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-[#050505]">
-                {/* Grid Overlay */}
                 <div className="absolute inset-0 z-10 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
 
                 {/* Video Players */}
-                <video ref={videoA} className={getBufferClass(activeClipInfo?.activeBuffer === 'A')} onTimeUpdate={handleVideoTimeUpdate} onEnded={handleVideoEnded} playsInline muted={false} />
-                <video ref={videoB} className={getBufferClass(activeClipInfo?.activeBuffer === 'B')} onTimeUpdate={handleVideoTimeUpdate} onEnded={handleVideoEnded} playsInline muted={false} />
+                <video ref={videoA} className={getBufferClass(activeClipInfo?.activeBuffer === 'A')} onTimeUpdate={(e) => handleMediaTimeUpdate(e, 'video', 'A')} playsInline muted={false} />
+                <video ref={videoB} className={getBufferClass(activeClipInfo?.activeBuffer === 'B')} onTimeUpdate={(e) => handleMediaTimeUpdate(e, 'video', 'B')} playsInline muted={false} />
 
-                {/* Audio Players (Hidden) */}
-                <audio ref={audioA} />
-                <audio ref={audioB} />
+                {/* Audio Players */}
+                <audio ref={audioA} onTimeUpdate={(e) => handleMediaTimeUpdate(e, 'audio', 'A')} />
+                <audio ref={audioB} onTimeUpdate={(e) => handleMediaTimeUpdate(e, 'audio', 'B')} />
 
-                {clips.length === 0 && <div className="text-slate-600 flex flex-col items-center gap-2"><MonitorPlay size={48} className="opacity-20" /><span className="text-xs font-mono opacity-50">NO SIGNAL</span></div>}
+                {clips.length === 0 && audioClips.length === 0 && (
+                    <div className="text-slate-600 flex flex-col items-center gap-2">
+                        <MonitorPlay size={48} className="opacity-20" />
+                        <span className="text-xs font-mono opacity-50">NO SIGNAL</span>
+                    </div>
+                )}
 
-                {/* Floating Restore Button (Minimal Mode) */}
+                {clips.length === 0 && audioClips.length > 0 && (
+                    <div className="text-emerald-500/50 flex flex-col items-center gap-4 animate-pulse">
+                        <Music size={64} />
+                        <span className="text-xs font-mono tracking-widest border border-emerald-500/30 px-3 py-1 rounded-full">AUDIO ONLY PREVIEW</span>
+                    </div>
+                )}
+
                 {!showControls && (
                     <button onClick={() => setShowControls(true)} className="absolute bottom-3 right-3 z-50 bg-black/60 hover:bg-black/90 text-white/50 hover:text-white p-2 rounded-lg backdrop-blur-md border border-white/10 transition-all shadow-lg animate-in fade-in zoom-in duration-200">
                         <ChevronUp size={16} />
@@ -207,7 +237,6 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                 )}
             </div>
 
-            {/* Transport Controls */}
             {showControls && (
                 <div className="h-12 bg-[#0a0a0a] border-t border-white/5 flex items-center px-4 gap-4 shrink-0 z-30 animate-in slide-in-from-bottom-2 duration-200">
                     <button onClick={handleTransportClick} className="w-8 h-8 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-all">
@@ -221,8 +250,6 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                         {onSplit && <button onClick={onSplit} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors" title="Split Clip"><Scissors size={14} /></button>}
                         <div className="w-px h-4 bg-white/10 mx-1"></div>
                         <button onClick={() => setShowControls(false)} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors" title="Hide Controls"><ChevronDown size={14} /></button>
-
-                        {/* Expand / Collapse Button */}
                         {onToggleExpand && (
                             <button onClick={onToggleExpand} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors ml-1" title={isExpanded ? "Exit Expanded Mode" : "Expand Monitor"}>
                                 {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}

@@ -13,7 +13,7 @@ export interface PreviewClip {
     playbackRate: number;
     label?: string;
 
-    // Calculated Timeline Props (The Engine needs these)
+    // Calculated Timeline Props
     timelineStart: number;
     timelineDuration: number;
 }
@@ -21,7 +21,7 @@ export interface PreviewClip {
 export interface PreviewState {
     previewType: 'sequence' | 'clip' | 'empty';
     clips: PreviewClip[];
-    audioClips: PreviewClip[]; // <--- NEW: Store separate audio tracks
+    audioClips: PreviewClip[];
     totalDuration: number;
     mix: { videoGain: number; audioGain: number };
     activeNodeId: string | null;
@@ -49,14 +49,11 @@ export const usePreviewLogic = (
         const activeNode = nodes.find(n => n.id === activeNodeId);
         if (!activeNode) return defaultState;
 
-        // Helper: Convert raw graph items into timeline clips
         const processSequence = (rawItems: any[]): PreviewClip[] => {
             let currentTimePointer = 0;
             return rawItems.map(item => {
                 const sourceDuration = item.end - item.start;
                 const speed = item.playbackRate || 1.0;
-
-                // Effective duration on timeline = (Source Length) / Speed
                 const timelineDuration = sourceDuration / speed;
 
                 const clip: PreviewClip = {
@@ -70,22 +67,19 @@ export const usePreviewLogic = (
             });
         };
 
-        // --- SCENARIO A: RENDER NODE (The Full Chain) ---
+        // --- SCENARIO A: RENDER NODE ---
         if (activeNode.type === 'render') {
-            // 1. Get the chain of clips feeding into 'video-in'
             const rawClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'video-in', 'clip');
-
-            // 2. Get the chain of audio clips feeding into 'audio-in'
             const rawAudioClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'audio-in', 'audio');
 
-            // 3. Process them into a timeline
             const clips = processSequence(rawClips);
             const audioClips = processSequence(rawAudioClips);
 
-            // Use video duration as master, but if no video, check audio
             const videoDuration = clips.reduce((acc, c) => acc + c.timelineDuration, 0);
             const audioDuration = audioClips.reduce((acc, c) => acc + c.timelineDuration, 0);
-            const totalDuration = videoDuration || audioDuration;
+
+            // If we have video, it dictates the length. If only audio, use audio length.
+            const totalDuration = videoDuration > 0 ? videoDuration : audioDuration;
 
             return {
                 previewType: 'sequence',
@@ -101,7 +95,7 @@ export const usePreviewLogic = (
             };
         }
 
-        // --- SCENARIO B: CLIP NODE (Single Item) ---
+        // --- SCENARIO B: CLIP NODE ---
         if (activeNode.type === 'clip') {
             const data = activeNode.data as any;
             const sourceDuration = data.endOffset - data.startOffset;
@@ -123,11 +117,39 @@ export const usePreviewLogic = (
             return {
                 previewType: 'clip',
                 clips: [clip],
-                audioClips: [], // Video clips handle their own audio usually
+                audioClips: [],
                 totalDuration: timelineDuration,
                 mix: { videoGain: 1, audioGain: 1 },
                 activeNodeId,
                 activeNodeType: 'clip'
+            };
+        }
+
+        // --- SCENARIO C: AUDIO NODE (Direct Preview) ---
+        if (activeNode.type === 'audio') {
+            const data = activeNode.data as any;
+            const sourceDuration = data.endOffset - data.startOffset;
+
+            const clip: PreviewClip = {
+                id: activeNode.id,
+                url: data.url,
+                start: data.startOffset,
+                end: data.endOffset,
+                volume: data.volume ?? 1.0,
+                playbackRate: 1.0,
+                label: data.label,
+                timelineStart: 0,
+                timelineDuration: sourceDuration
+            };
+
+            return {
+                previewType: 'clip',
+                clips: [], // No video
+                audioClips: [clip],
+                totalDuration: sourceDuration,
+                mix: { videoGain: 1, audioGain: 1 },
+                activeNodeId,
+                activeNodeType: 'audio'
             };
         }
 
