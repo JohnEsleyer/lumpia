@@ -231,21 +231,16 @@ export const VideoInspector: React.FC<VideoInspectorProps> = ({
                             )}
 
                             {/* ... (Existing Render Node Actions) ... */}
-                            {activeNodeType === 'render' && !isTrimming && (
-                                // ... (Existing Render Node Code)
+                            {/* RENDER NODE ACTIONS */}
+                            {activeNodeType === 'render' && (
                                 <div className="space-y-3 animate-in slide-in-from-bottom-2">
                                     <div className="grid grid-cols-1 gap-2 pt-1">
                                         {viewMode === 'preview' && (
                                             <Button
                                                 onClick={onProcess}
-                                                className={`h-10 font-bold flex items-center justify-center gap-2 text-xs w-full
-                                                    ${processedUrl
-                                                        ? 'bg-slate-700 hover:bg-slate-600'
-                                                        : 'bg-purple-600 hover:bg-purple-500 shadow-purple-900/20'
-                                                    }`}
+                                            // ... (Process Full Video Button)
                                             >
-                                                {processedUrl ? <RotateCcw size={14} /> : <Play size={14} fill="currentColor" />}
-                                                {processedUrl ? 'Re-Process Video' : 'Process Full Video'}
+                                                {/* ... */}
                                             </Button>
                                         )}
 

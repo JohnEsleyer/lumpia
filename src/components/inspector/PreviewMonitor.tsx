@@ -18,7 +18,7 @@ interface PreviewMonitorProps {
     isExpanded?: boolean;
     onToggleExpand?: () => void;
     projectDimensions?: { width: number; height: number };
-    trimRange?: { start: number; end: number };
+    trimRange?: { start: number; end: number }; // Existing prop from previous change
 }
 
 export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
@@ -34,7 +34,7 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     isExpanded,
     onToggleExpand,
     projectDimensions,
-    trimRange,
+    trimRange // Existing prop
 }) => {
     const playerRef = useRef<PlayerRef>(null);
     const audioRef = useRef<HTMLAudioElement>(null); // Sidecar Audio Ref
@@ -56,20 +56,6 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         onPlayPauseRef.current = onPlayPause;
     }, [onTimeUpdate, onPlayPause]);
 
-
-    // --- TRIM LOOPING LOGIC ---
-    // If we are trimming, we want to auto-loop when we hit the end of the trim preview
-    useEffect(() => {
-        if (!trimRange) return;
-
-        // If current time exceeds the trim duration (plus a tiny buffer)
-        // Loop back to 0 (which is the start of the trimmed clip in the ghost state)
-        if (isPlaying && currentTime >= trimRange.end - 0.05) {
-            onSeek(0);
-        }
-    }, [currentTime, isPlaying, trimRange, onSeek]);
-
-
     const FPS = 30;
     const durationInFrames = Math.max(1, Math.ceil((previewState.totalDuration || 1) * FPS));
 
@@ -81,6 +67,7 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     }), [previewState.clips, previewState.audioClips, FPS]);
 
     // --- SIDECAR AUDIO SYNC LOGIC ---
+    // ... (unchanged) ...
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio) return;
@@ -134,6 +121,7 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
 
     }, [currentTime, isPlaying, previewState.audioClips]);
 
+
     // --- PLAYER SYNC LOGIC ---
 
     // 1. Play/Pause
@@ -183,6 +171,16 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return () => { player.removeEventListener('frameupdate', onFrame); };
     }, [isPlaying, durationInFrames, FPS]);
 
+    // --- TRIM LOOPING LOGIC ---
+    useEffect(() => {
+        if (!trimRange) return;
+
+        if (isPlaying && currentTime >= trimRange.end - 0.05) {
+            onSeek(0);
+        }
+    }, [currentTime, isPlaying, trimRange, onSeek]);
+
+
     const formatTime = (t: number) => {
         const m = Math.floor(t / 60);
         const s = Math.floor(t % 60);
@@ -190,23 +188,52 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return `${m}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     };
 
+    // --- START: REDESIGNED RENDERED RESULT VIEW ---
     if (viewMode === 'result' && processedUrl) {
         return (
-            <div className="flex flex-col h-full bg-black relative overflow-hidden">
-                <div className="absolute inset-0 z-0 pointer-events-none opacity-30">
-                    <video src={`http://localhost:3001${processedUrl}`} className="w-full h-full object-cover blur-3xl scale-125" muted loop autoPlay />
-                    <div className="absolute inset-0 bg-black/50" />
-                </div>
+            <div className="flex flex-col h-full bg-[#050505] relative overflow-hidden">
+                {/* Main Video Player Area - FLEX-1 ensures it takes all available space above footer */}
                 <div className="flex-1 flex items-center justify-center relative z-10 p-4">
-                    <video src={`http://localhost:3001${processedUrl}`} className="w-full h-full object-contain shadow-2xl drop-shadow-2xl rounded-lg" controls autoPlay />
+                    <div
+                        // New container to apply aspect ratio and max-size without being flex-1
+                        className="relative max-w-full max-h-full rounded-lg bg-black shadow-2xl drop-shadow-2xl overflow-hidden ring-1 ring-white/10"
+                        style={{ aspectRatio: `${width}/${height}` }}
+                    >
+                        {/* The video element itself */}
+                        <video
+                            src={`http://localhost:3001${processedUrl}`}
+                            className="w-full h-full object-contain"
+                            controls
+                            autoPlay
+                        />
+                    </div>
                 </div>
-                <div className="bg-[#0a0a0a]/80 backdrop-blur-md border-t border-white/5 p-2 text-center text-xs text-green-500 font-bold uppercase tracking-widest z-20">Playing Rendered Output</div>
+
+                {/* Footer/Control Bar for Rendered Result - Fixed Height */}
+                <div className="h-12 bg-[#0a0a0a]/80 backdrop-blur-md border-t border-white/5 p-2 px-4 flex justify-between items-center shrink-0 z-20">
+                    <div className="text-xs text-green-500 font-bold uppercase tracking-widest flex items-center gap-2">
+                        <MonitorPlay size={14} /> Rendered Result
+                    </div>
+
+                    {/* View Large Button (Reuses Cinema Mode toggle logic) */}
+                    {onToggleExpand && (
+                        <button
+                            onClick={onToggleExpand}
+                            className="p-1.5 bg-white/5 hover:bg-white/10 rounded-md text-white/70 hover:text-white transition-colors ml-4"
+                            title={isExpanded ? "Exit Expanded Mode" : "Expand Monitor (View Large)"}
+                        >
+                            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                        </button>
+                    )}
+                </div>
             </div>
         );
     }
+    // --- END: REDESIGNED RENDERED RESULT VIEW ---
 
     const hasContent = previewState.clips.length > 0 || previewState.audioClips.length > 0;
 
+    // ... (rest of the component for the 'preview' mode is unchanged) ...
     return (
         <div className={`flex flex-col h-full bg-black select-none group relative ${isExpanded ? 'rounded-2xl overflow-hidden' : ''}`}>
             {/* Hidden Audio Element for Graph Preview */}
