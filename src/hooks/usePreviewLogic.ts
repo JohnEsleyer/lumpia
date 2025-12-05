@@ -21,6 +21,7 @@ export interface PreviewClip {
 export interface PreviewState {
     previewType: 'sequence' | 'clip' | 'empty';
     clips: PreviewClip[];
+    audioClips: PreviewClip[]; // <--- NEW: Store separate audio tracks
     totalDuration: number;
     mix: { videoGain: number; audioGain: number };
     activeNodeId: string | null;
@@ -36,6 +37,7 @@ export const usePreviewLogic = (
         const defaultState: PreviewState = {
             previewType: 'empty',
             clips: [],
+            audioClips: [],
             totalDuration: 0,
             mix: { videoGain: 1, audioGain: 1 },
             activeNodeId,
@@ -71,15 +73,24 @@ export const usePreviewLogic = (
         // --- SCENARIO A: RENDER NODE (The Full Chain) ---
         if (activeNode.type === 'render') {
             // 1. Get the chain of clips feeding into 'video-in'
-            const rawClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'video-in');
+            const rawClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'video-in', 'clip');
 
-            // 2. Process them into a timeline
+            // 2. Get the chain of audio clips feeding into 'audio-in'
+            const rawAudioClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'audio-in', 'audio');
+
+            // 3. Process them into a timeline
             const clips = processSequence(rawClips);
-            const totalDuration = clips.reduce((acc, c) => acc + c.timelineDuration, 0);
+            const audioClips = processSequence(rawAudioClips);
+
+            // Use video duration as master, but if no video, check audio
+            const videoDuration = clips.reduce((acc, c) => acc + c.timelineDuration, 0);
+            const audioDuration = audioClips.reduce((acc, c) => acc + c.timelineDuration, 0);
+            const totalDuration = videoDuration || audioDuration;
 
             return {
                 previewType: 'sequence',
                 clips,
+                audioClips,
                 totalDuration,
                 mix: {
                     videoGain: (activeNode.data as any)?.videoMixGain ?? 1.0,
@@ -112,6 +123,7 @@ export const usePreviewLogic = (
             return {
                 previewType: 'clip',
                 clips: [clip],
+                audioClips: [], // Video clips handle their own audio usually
                 totalDuration: timelineDuration,
                 mix: { videoGain: 1, audioGain: 1 },
                 activeNodeId,

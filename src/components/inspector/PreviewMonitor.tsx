@@ -32,13 +32,19 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     isExpanded,
     onToggleExpand
 }) => {
-    // ... (Hooks and Logic remain identical to previous iteration) ...
-    const { clips, totalDuration } = previewState;
+    const { clips, audioClips, totalDuration } = previewState;
     const [showControls, setShowControls] = useState(true);
     const isEnded = totalDuration > 0 && currentTime >= totalDuration - 0.05;
+
+    // Video Buffers
     const videoA = useRef<HTMLVideoElement>(null);
     const videoB = useRef<HTMLVideoElement>(null);
 
+    // Audio Buffers
+    const audioA = useRef<HTMLAudioElement>(null);
+    const audioB = useRef<HTMLAudioElement>(null);
+
+    // --- VIDEO CLIP LOGIC ---
     const activeClipInfo = useMemo(() => {
         if (clips.length === 0) return null;
         for (let i = 0; i < clips.length; i++) {
@@ -52,6 +58,26 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return { index: clips.length - 1, clip: last, sourceTime: last.end, nextClip: undefined, activeBuffer: (clips.length - 1) % 2 === 0 ? 'A' : 'B' };
     }, [clips, currentTime]);
 
+    // --- AUDIO CLIP LOGIC ---
+    const activeAudioClipInfo = useMemo(() => {
+        if (!audioClips || audioClips.length === 0) return null;
+        for (let i = 0; i < audioClips.length; i++) {
+            const clip = audioClips[i];
+            const clipEnd = clip.timelineStart + clip.timelineDuration;
+            if (currentTime >= clip.timelineStart && currentTime < clipEnd - 0.01) {
+                return {
+                    index: i,
+                    clip,
+                    sourceTime: clip.start + (currentTime - clip.timelineStart) * clip.playbackRate,
+                    nextClip: audioClips[i + 1],
+                    activeBuffer: i % 2 === 0 ? 'A' : 'B'
+                };
+            }
+        }
+        return null;
+    }, [audioClips, currentTime]);
+
+    // --- SYNC EFFECT (VIDEO) ---
     useEffect(() => {
         if (viewMode === 'result') return;
         if (!activeClipInfo) return;
@@ -61,8 +87,11 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         if (!primary || !secondary) return;
 
         if (primary.src !== clip.url) { primary.src = clip.url; primary.load(); }
+
+        // Video Clips use 'videoGain' slider
         primary.volume = (clip.volume ?? 1) * (previewState.mix?.videoGain ?? 1);
         primary.playbackRate = clip.playbackRate ?? 1.0;
+
         if (Math.abs(primary.currentTime - sourceTime) > 0.3) { primary.currentTime = sourceTime; }
         if (isPlaying && !isEnded) { if (primary.paused) primary.play().catch(() => { }); } else { if (!primary.paused) primary.pause(); }
 
@@ -70,6 +99,47 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         if (nextClip) { if (secondary.src !== nextClip.url) { secondary.src = nextClip.url; secondary.load(); secondary.currentTime = nextClip.start; } }
         else { if (secondary.src) { secondary.removeAttribute('src'); secondary.load(); } }
     }, [activeClipInfo, isPlaying, previewState.mix, viewMode, isEnded]);
+
+    // --- SYNC EFFECT (AUDIO) ---
+    useEffect(() => {
+        if (viewMode === 'result') return;
+
+        const primary = activeAudioClipInfo?.activeBuffer === 'A' ? audioA.current : audioB.current;
+        const secondary = activeAudioClipInfo?.activeBuffer === 'A' ? audioB.current : audioA.current;
+
+        if (activeAudioClipInfo && primary && secondary) {
+            const { clip, sourceTime, nextClip } = activeAudioClipInfo;
+
+            if (primary.src !== clip.url) { primary.src = clip.url; primary.load(); }
+
+            // Audio Clips use 'audioGain' slider
+            primary.volume = (clip.volume ?? 1) * (previewState.mix?.audioGain ?? 1);
+            primary.playbackRate = clip.playbackRate ?? 1.0;
+
+            if (Math.abs(primary.currentTime - sourceTime) > 0.3) { primary.currentTime = sourceTime; }
+
+            if (isPlaying && !isEnded) {
+                if (primary.paused) primary.play().catch(() => { });
+            } else {
+                if (!primary.paused) primary.pause();
+            }
+
+            if (!secondary.paused) secondary.pause();
+            if (nextClip) {
+                if (secondary.src !== nextClip.url) {
+                    secondary.src = nextClip.url;
+                    secondary.load();
+                    secondary.currentTime = nextClip.start;
+                }
+            } else {
+                if (secondary.src) { secondary.removeAttribute('src'); secondary.load(); }
+            }
+        } else {
+            // Stop audio if no active clip
+            if (audioA.current && !audioA.current.paused) audioA.current.pause();
+            if (audioB.current && !audioB.current.paused) audioB.current.pause();
+        }
+    }, [activeAudioClipInfo, isPlaying, previewState.mix, viewMode, isEnded]);
 
     const handleVideoTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         if (viewMode === 'result' || !activeClipInfo) return;
@@ -119,8 +189,13 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                 {/* Grid Overlay */}
                 <div className="absolute inset-0 z-10 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
 
+                {/* Video Players */}
                 <video ref={videoA} className={getBufferClass(activeClipInfo?.activeBuffer === 'A')} onTimeUpdate={handleVideoTimeUpdate} onEnded={handleVideoEnded} playsInline muted={false} />
                 <video ref={videoB} className={getBufferClass(activeClipInfo?.activeBuffer === 'B')} onTimeUpdate={handleVideoTimeUpdate} onEnded={handleVideoEnded} playsInline muted={false} />
+
+                {/* Audio Players (Hidden) */}
+                <audio ref={audioA} />
+                <audio ref={audioB} />
 
                 {clips.length === 0 && <div className="text-slate-600 flex flex-col items-center gap-2"><MonitorPlay size={48} className="opacity-20" /><span className="text-xs font-mono opacity-50">NO SIGNAL</span></div>}
 
