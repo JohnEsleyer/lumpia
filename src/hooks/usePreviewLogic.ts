@@ -1,6 +1,6 @@
 
 import { type Node, type Edge } from '@xyflow/react';
-import { getSequenceFromHandle } from '../utils/graphUtils';
+import { getConnectedSequence } from '../utils/graphUtils';
 import { useMemo } from 'react';
 
 export interface PreviewClip {
@@ -64,8 +64,11 @@ export const usePreviewLogic = (
 
         // --- SCENARIO A: RENDER NODE ---
         if (activeNode.type === 'render') {
-            const rawClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'video-in', 'clip');
-            const rawAudioClips = getSequenceFromHandle(nodes, edges, activeNodeId, 'audio-in', 'audio');
+            // 1. Traverse Video Chain (connected to 'video-in')
+            const rawClips = getConnectedSequence(nodes, edges, activeNodeId, 'video-in');
+
+            // 2. Traverse Audio Chain (connected to 'audio-in')
+            const rawAudioClips = getConnectedSequence(nodes, edges, activeNodeId, 'audio-in');
 
             const clips = processSequence(rawClips);
             const audioClips = processSequence(rawAudioClips);

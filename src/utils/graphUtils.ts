@@ -1,85 +1,90 @@
 import { type Node, type Edge } from '@xyflow/react';
 
 /**
- * Recursively traverses the graph backwards to build a timeline sequence.
- * 
- * @param nodes All nodes in graph
- * @param edges All edges in graph
- * @param targetNodeId The node we are tracing back from
- * @param targetHandleId The specific handle (e.g. 'video-in'), or null for default
- * @param nodeTypeFilter Optional: Only include nodes of this type (e.g. 'clip')
- * @param visited Internal use to prevent infinite loops
+ * Traverses backwards from a specific node handle to find the linear sequence of clips.
+ * Returns an array of node data in CHRONOLOGICAL order (Start -> End).
  */
-export const getSequenceFromHandle = (
+export const getConnectedSequence = (
     nodes: Node[],
     edges: Edge[],
-    targetNodeId: string,
-    targetHandleId: string | null,
-    nodeTypeFilter?: string,
-    visited = new Set<string>()
+    startNodeId: string,
+    startHandleId: string | null // e.g., 'video-in' for RenderNode, null for Clips
 ): any[] => {
-    // 1. Infinite Loop Protection
-    if (visited.has(targetNodeId)) return [];
-    visited.add(targetNodeId);
+    const sequence: any[] = [];
+    const visited = new Set<string>();
 
-    // 2. Find the incoming edge
-    const edge = edges.find(e =>
-        e.target === targetNodeId &&
-        (targetHandleId ? e.targetHandle === targetHandleId : true)
-    );
+    // 1. Helper to find the input edge for a specific node/handle combo
+    const findInputEdge = (nodeId: string, handleId: string | null) => {
+        return edges.find(edge => {
+            const targetMatch = edge.target === nodeId;
+            // If handleId is specified, match it. If not (ClipNode), accept any connection to target.
+            const handleMatch = handleId ? edge.targetHandle === handleId : true;
+            return targetMatch && handleMatch;
+        });
+    };
 
-    if (!edge) return [];
+    // 2. Recursive Walker
+    const walkBackwards = (currentNodeId: string, entryHandleId: string | null) => {
+        if (visited.has(currentNodeId)) return; // Prevent infinite loops
+        visited.add(currentNodeId);
 
-    // 3. Find the Source Node
-    const sourceNode = nodes.find(n => n.id === edge.source);
-    if (!sourceNode) return [];
+        // Find the edge connecting TO this node
+        const edge = findInputEdge(currentNodeId, entryHandleId);
 
-    // 4. Extract Data (if matches filter)
-    let currentItem: any = null;
+        if (!edge) return; // End of the line (Start of sequence)
 
-    // Check filter if provided
-    const typeMatch = !nodeTypeFilter || sourceNode.type === nodeTypeFilter;
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        if (!sourceNode) return;
 
-    if (typeMatch) {
-        if (sourceNode.type === 'clip') {
-            const data = sourceNode.data as any;
-            currentItem = {
-                id: sourceNode.id,
-                type: 'clip',
-                url: data.url,
-                start: data.startOffset || 0,
-                end: data.endOffset || data.duration || 0,
-                sourceDuration: (data.endOffset || 0) - (data.startOffset || 0),
-                volume: data.volume ?? 1.0,
-                playbackRate: data.playbackRate ?? 1.0,
-                label: data.label,
-                subtitles: data.subtitles
-            };
-        } else if (sourceNode.type === 'audio') {
-            const data = sourceNode.data as any;
-            currentItem = {
-                id: sourceNode.id,
-                type: 'audio',
-                url: data.url,
-                start: data.startOffset || 0,
-                end: data.endOffset || data.duration || 0,
-                label: data.label,
-                volume: data.volume ?? 1.0,
-                playbackRate: 1.0
-            };
+        // RECURSE FIRST (Go deeper/backwards before processing current)
+        // For ClipNodes, we assume the input handle is generic (null) or 'target'
+        // We strictly walk back from the source node's input.
+        walkBackwards(sourceNode.id, null);
+
+        // PROCESS CURRENT (After returning from recursion, we are moving forward in time)
+        const nodeData = extractNodeData(sourceNode);
+        if (nodeData) {
+            sequence.push(nodeData);
         }
+    };
+
+    // Start the traversal
+    walkBackwards(startNodeId, startHandleId);
+
+    return sequence;
+};
+
+// Helper to sanitize data types
+const extractNodeData = (node: Node) => {
+    const getNumber = (val: any, def: number) => (typeof val === 'number' && !isNaN(val) ? val : def);
+
+    if (node.type === 'clip') {
+        const data = node.data as any;
+        return {
+            id: node.id,
+            type: 'clip',
+            url: data.url,
+            // Ensure we use the trimmed duration, not just file duration
+            start: getNumber(data.startOffset, 0),
+            end: getNumber(data.endOffset, data.sourceDuration || 10),
+            volume: getNumber(data.volume, 1.0),
+            playbackRate: getNumber(data.playbackRate, 1.0),
+            label: data.label
+        };
     }
 
-    // 5. RECURSIVE STEP
-    // Pass the same filter up the chain
-    // ClipNodes accept input on default handle (null)
-    const parentSequence = getSequenceFromHandle(nodes, edges, sourceNode.id, null, nodeTypeFilter, visited);
-
-    // 6. Return Combined
-    if (currentItem) {
-        return [...parentSequence, currentItem];
+    if (node.type === 'audio') {
+        const data = node.data as any;
+        return {
+            id: node.id,
+            type: 'audio',
+            url: data.url,
+            start: getNumber(data.startOffset, 0),
+            end: getNumber(data.endOffset, data.duration || 10),
+            volume: getNumber(data.volume, 1.0),
+            label: data.label
+        };
     }
 
-    // If node was skipped (didn't match filter), just return parents
-    return parentSequence;
+    return null;
 };

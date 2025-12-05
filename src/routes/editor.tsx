@@ -41,7 +41,7 @@ import { VideoInspector } from '../components/inspector/VideoInspector';
 
 // Imported Hooks
 import { usePreviewLogic } from '../hooks/usePreviewLogic';
-import { getSequenceFromHandle } from '../utils/graphUtils';
+import { getConnectedSequence } from '../utils/graphUtils';
 
 // --- Routing ---
 export const Route = createFileRoute('/editor')({
@@ -331,7 +331,7 @@ function EditorApp() {
         audioMixGain: 1.0
       };
 
-      const rawVideoClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'video-in', 'clip');
+      const rawVideoClips = getConnectedSequence(currentNodes, currentEdges, nodeId, 'video-in');
       if (!rawVideoClips || rawVideoClips.length === 0) throw new Error("No video clips connected");
 
       const videoClips = rawVideoClips.map((clip: any) => ({
@@ -342,7 +342,7 @@ function EditorApp() {
         playbackRate: clip.playbackRate ?? 1.0
       }));
 
-      const rawAudioClips = getSequenceFromHandle(currentNodes, currentEdges, nodeId, 'audio-in', 'audio');
+      const rawAudioClips = getConnectedSequence(currentNodes, currentEdges, nodeId, 'audio-in');
       const audioClips = rawAudioClips.map((clip: any) => ({
         url: clip.url.replace(/^https?:\/\/[^/]+/, ''),
         start: clip.start,

@@ -17,7 +17,7 @@ interface PreviewMonitorProps {
     processedUrl?: string;
     isExpanded?: boolean;
     onToggleExpand?: () => void;
-    projectDimensions?: { width: number; height: number }; // NEW PROP
+    projectDimensions?: { width: number; height: number };
 }
 
 export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
@@ -35,8 +35,13 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     projectDimensions
 }) => {
     const playerRef = useRef<PlayerRef>(null);
+    const audioRef = useRef<HTMLAudioElement>(null); // Sidecar Audio Ref
     const [showControls, setShowControls] = useState(true);
+
+    // Flags to manage sync loop
     const isPlayerDriving = useRef(false);
+    const lastAudioSrc = useRef<string | null>(null);
+
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onPlayPauseRef = useRef(onPlayPause);
 
@@ -59,6 +64,63 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         fps: FPS
     }), [previewState.clips, previewState.audioClips, FPS]);
 
+    // --- SIDECAR AUDIO SYNC LOGIC ---
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        // 1. Find which audio clip should be playing at this currentTime
+        // We look for a clip where: timelineStart <= currentTime < timelineEnd
+        const activeAudioClip = previewState.audioClips.find(clip => {
+            const end = clip.timelineStart + clip.timelineDuration;
+            return currentTime >= clip.timelineStart && currentTime < end;
+        });
+
+        // 2. If valid clip found
+        if (activeAudioClip) {
+            // A. Handle Source Switching
+            if (lastAudioSrc.current !== activeAudioClip.url) {
+                audio.src = activeAudioClip.url;
+                lastAudioSrc.current = activeAudioClip.url;
+            }
+
+            // B. Calculate where we are INSIDE the audio file
+            // (Current Global Time - Clip Global Start) + Clip Trim Start
+            const timeInFile = (currentTime - activeAudioClip.timelineStart) + activeAudioClip.start;
+
+            // C. Apply Volume
+            audio.volume = activeAudioClip.volume ?? 1.0;
+
+            // D. Handle Seek / Drift
+            // We only force the audio time if it's way off (> 0.2s) to allow natural playback 
+            // without stuttering, OR if we just paused/scrubbed.
+            if (Math.abs(audio.currentTime - timeInFile) > 0.25) {
+                audio.currentTime = timeInFile;
+            }
+
+            // E. Play/Pause State
+            if (isPlaying) {
+                if (audio.paused) {
+                    audio.play().catch(e => console.warn("Audio play failed", e));
+                }
+            } else {
+                if (!audio.paused) audio.pause();
+            }
+
+        } else {
+            // 3. No audio clip at this time
+            if (!audio.paused) {
+                audio.pause();
+            }
+            // Optional: reset src if you want silence to clear buffer
+            // audio.removeAttribute('src'); 
+        }
+
+    }, [currentTime, isPlaying, previewState.audioClips]);
+
+    // --- PLAYER SYNC LOGIC ---
+
+    // 1. Play/Pause
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
@@ -66,21 +128,28 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         else if (!isPlaying && player.isPlaying()) player.pause();
     }, [isPlaying]);
 
+    // 2. Seeking (Scrubbing)
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
+
         if (isPlayerDriving.current) {
             isPlayerDriving.current = false;
             return;
         }
+
         const playerFrame = player.getCurrentFrame();
         const targetFrame = Math.round(currentTime * FPS);
+
+        // Looser threshold while playing to prevent fighting
         const threshold = isPlaying ? 5 : 0.5;
+
         if (Math.abs(playerFrame - targetFrame) > threshold) {
             player.seekTo(targetFrame);
         }
     }, [currentTime, FPS, isPlaying]);
 
+    // 3. Time Update Listener
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
@@ -124,6 +193,9 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
 
     return (
         <div className={`flex flex-col h-full bg-black select-none group relative ${isExpanded ? 'rounded-2xl overflow-hidden' : ''}`}>
+            {/* Hidden Audio Element for Graph Preview */}
+            <audio ref={audioRef} className="hidden" />
+
             <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-[#050505]">
                 {hasContent ? (
                     <Player
@@ -132,8 +204,8 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                         inputProps={inputProps}
                         durationInFrames={durationInFrames}
                         fps={FPS}
-                        compositionWidth={width}   // Uses dynamic width
-                        compositionHeight={height} // Uses dynamic height
+                        compositionWidth={width}
+                        compositionHeight={height}
                         style={{ width: '100%', height: '100%' }}
                         controls={false}
                         autoPlay={false}
