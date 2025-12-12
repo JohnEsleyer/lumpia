@@ -1,6 +1,6 @@
 // src/remotion/PreviewComposition.tsx
 import React from 'react';
-import { AbsoluteFill, Sequence, OffthreadVideo, Img } from 'remotion';
+import { AbsoluteFill, Sequence, OffthreadVideo, Img, Audio } from 'remotion';
 import type { PreviewClip } from '../hooks/usePreviewLogic';
 
 export interface PreviewCompositionProps {
@@ -11,10 +11,12 @@ export interface PreviewCompositionProps {
 
 export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
     clips,
+    audioClips,
     fps
 }) => {
     return (
         <AbsoluteFill style={{ backgroundColor: '#000' }}>
+            {/* Video / Image Layers */}
             {clips.map((clip) => {
                 const durationInFrames = Math.max(1, Math.ceil(clip.timelineDuration * fps));
                 const startFrame = Math.round(clip.timelineStart * fps);
@@ -43,6 +45,27 @@ export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
                                 crossOrigin="anonymous"
                             />
                         )}
+                    </Sequence>
+                );
+            })}
+
+            {/* Audio Layers */}
+            {audioClips.map((clip) => {
+                const durationInFrames = Math.max(1, Math.ceil(clip.timelineDuration * fps));
+                const startFrame = Math.round(clip.timelineStart * fps);
+
+                return (
+                    <Sequence
+                        key={`audio-${clip.id}`}
+                        from={startFrame}
+                        durationInFrames={durationInFrames}
+                    >
+                        <Audio
+                            src={clip.url}
+                            startFrom={Math.round((clip.start || 0) * fps)}
+                            volume={clip.volume ?? 1.0}
+                            playbackRate={clip.playbackRate ?? 1.0}
+                        />
                     </Sequence>
                 );
             })}

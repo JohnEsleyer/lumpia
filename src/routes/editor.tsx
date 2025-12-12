@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Clapperboard,
   Plus,
-  Save
+  Save,
+  Scissors
 } from 'lucide-react';
 import React from 'react';
 
@@ -14,13 +15,14 @@ import { Button } from '../components/ui/Button';
 // Layout & New Components
 import { EditorLayout } from '../layout/EditorLayout';
 import { Player } from '../components/player/Player';
-import { PropertiesPanel } from '../components/inspector/PropertiesPanel';
+import { UtilityPanel } from '../components/inspector/UtilityPanel';
 
 // Timeline Components
 import { TimelineContainer } from '../components/timeline/TimelineContainer';
 import { useTimelineLogic } from '../hooks/useTimelineLogic';
 import { useTimelinePreview } from '../hooks/useTimelinePreview';
 import { AddAssetModal } from '../components/modals/AddAssetModal';
+import { AudioTrimmerModal } from '../components/modals/AudioTrimmerModal';
 
 export const Route = createFileRoute('/editor')({
   component: () => <EditorApp />,
@@ -52,10 +54,12 @@ const LibraryPanel = ({
   assets,
   onOpenUploadModal,
   onDragStart,
+  onTrimAudio,
 }: {
   assets: LibraryAsset[],
   onOpenUploadModal: () => void,
   onDragStart: (e: React.DragEvent, type: string, payload: any) => void,
+  onTrimAudio: (asset: LibraryAsset) => void
 }) => {
   // const [activeTab, setActiveTab] = useState<'media'>('media');
 
@@ -143,6 +147,23 @@ aspect-video w-full rounded-md overflow-hidden shrink-0 relative border flex ite
                       {asset.name}
                     </div>
                   </div>
+
+                  {/* Trim Button for Audio */}
+                  {isAudio && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Fix: Prevent drag start when clicking button? 
+                        // Actually it's inside a draggable, might be tricky.
+                        // But usually button click takes precedence.
+                        onTrimAudio(asset);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 absolute top-2 right-2 p-1.5 bg-zinc-900/90 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 rounded-md border border-zinc-700 transition-all shadow-xl z-20"
+                      title="Trim & Add"
+                    >
+                      <Scissors size={12} />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -162,9 +183,18 @@ function EditorApp() {
   const [isSaving, setIsSaving] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
+  // UI State
+  const [isLibraryVisible, setIsLibraryVisible] = useState(true);
+  const [isUtilityVisible, setIsUtilityVisible] = useState(true);
+  const [activeTool, setActiveTool] = useState<'cursor' | 'split'>('cursor');
+
   // Video State
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // Audio Trimmer State
+  const [trimmerAsset, setTrimmerAsset] = useState<LibraryAsset | null>(null);
+  const [isTrimmerOpen, setIsTrimmerOpen] = useState(false);
 
   // Timeline Logic
   const timeline = useTimelineLogic(project);
@@ -228,6 +258,44 @@ function EditorApp() {
     }
   };
 
+  const handleSplit = () => {
+    if (selectedItemId) {
+      const track = timeline.tracks.find(t => t.items.some(i => i.id === selectedItemId));
+      if (track) {
+        timeline.splitClip(track.id, selectedItemId, timeline.currentTime);
+      }
+    }
+  };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Delete selected item
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItemId) {
+        // Find which track has this item
+        const track = timeline.tracks.find(t => t.items.some(i => i.id === selectedItemId));
+        if (track) {
+          timeline.deleteClip(track.id, selectedItemId);
+          setSelectedItemId(null); // Deselect
+        }
+      }
+
+      if (e.key.toLowerCase() === 's' && selectedItemId) {
+        handleSplit();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedItemId, timeline]);
+
+  const handleSplitClick = (itemId: string, time: number) => {
+    const track = timeline.tracks.find(t => t.items.some(i => i.id === itemId));
+    if (track) {
+      timeline.splitClip(track.id, itemId, time);
+    }
+  };
+
   // derived props for PropertiesPanel
   const selectedItem = selectedItemId
     ? timeline.tracks.flatMap(t => t.items).find(i => i.id === selectedItemId)
@@ -242,11 +310,19 @@ function EditorApp() {
   return (
     <>
       <EditorLayout
+        isLibraryVisible={isLibraryVisible}
+        setIsLibraryVisible={setIsLibraryVisible}
+        isPropertiesVisible={isUtilityVisible}
+        setIsPropertiesVisible={setIsUtilityVisible}
         library={
           <LibraryPanel
             assets={libraryAssets}
             onOpenUploadModal={() => setIsUploadModalOpen(true)}
             onDragStart={onDragStart}
+            onTrimAudio={(asset) => {
+              setTrimmerAsset(asset);
+              setIsTrimmerOpen(true);
+            }}
           />
         }
         player={
@@ -270,7 +346,10 @@ function EditorApp() {
               try {
                 const data = JSON.parse(e.dataTransfer.getData('application/json'));
                 if (data.type.startsWith('asset')) {
-                  const trackType = data.type === 'asset-audio' ? 'audio' : 'video';
+                  let trackType = 'video';
+                  if (data.type === 'asset-audio') trackType = 'audio';
+                  else if (data.type === 'asset-image') trackType = 'overlay';
+
                   const track = timeline.tracks.find(t => t.type === trackType);
                   if (track) {
                     timeline.addClip(track.id, data.payload, timeline.currentTime);
@@ -281,6 +360,9 @@ function EditorApp() {
           >
             {/* Floating Action Bar */}
             <div className="absolute top-[-3rem] right-4 flex gap-2 z-50">
+              <Button onClick={handleSplit} disabled={!selectedItemId} className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700 disabled:opacity-50">
+                <Scissors size={14} className="mr-2" /> Split
+              </Button>
               <Button onClick={handleSave} isLoading={isSaving} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 text-white border-0">
                 <Save size={14} className="mr-2" /> Save Project
               </Button>
@@ -296,19 +378,47 @@ function EditorApp() {
               items={timeline.tracks.flatMap(t => t.items)}
               selectedItemId={selectedItemId}
               onItemClick={setSelectedItemId}
+              getAssetUrl={(resourceId) => {
+                const asset = libraryAssets.find(a => a.name === resourceId);
+                return asset ? `http://localhost:3001${asset.url}` : '';
+              }}
+              activeTool={activeTool}
+              onSplit={handleSplitClick}
+              onToggleMute={timeline.toggleTrackMute}
             />
           </div>
         }
         properties={
-          <PropertiesPanel
+          <UtilityPanel
             selectedItemId={selectedItemId}
             // selectedItemType={selectedTrackType === 'audio' ? 'audio' : selectedItem ? 'clip' : null}
             properties={selectedItem ? { id: selectedItem.id, volume: selectedItem.volume ?? 1, playbackRate: selectedItem.playbackRate ?? 1 } : null}
             onUpdate={handleUpdateNode}
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
           />
         }
       />
       <AddAssetModal isOpen={isUploadModalOpen} onClose={() => setIsUploadModalOpen(false)} projectId={projectId} onAssetAdded={(newAssets: LibraryAsset[]) => setLibraryAssets(newAssets)} />
+
+      <AudioTrimmerModal
+        isOpen={isTrimmerOpen}
+        onClose={() => setIsTrimmerOpen(false)}
+        asset={trimmerAsset}
+        onAddToTimeline={(startOffset, duration) => {
+          if (trimmerAsset) {
+            const audioTrack = timeline.tracks.find(t => t.type === 'audio');
+            if (audioTrack) {
+              timeline.addClip(
+                audioTrack.id,
+                trimmerAsset,
+                timeline.currentTime,
+                { startOffset, duration }
+              );
+            }
+          }
+        }}
+      />
     </>
   );
 }

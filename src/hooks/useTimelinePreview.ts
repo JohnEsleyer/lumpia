@@ -32,19 +32,27 @@ export const useTimelinePreview = (
 ): PreviewState => {
     return useMemo(() => {
         // Flatten video tracks
-        const videoItems = tracks
-            .filter(t => t.type === 'video' || t.type === 'overlay') // Treat overlay as video for now (simpler z-index logic later)
-            .flatMap(t => t.items);
+        // Reverse tracks for layering: Bottom tracks first, Top tracks last (Painter's Algorithm)
+        // Assuming tracks[0] is at the top of the timeline UI.
+        const videoTracks = [...tracks]
+            .reverse()
+            .filter(t => t.type === 'video' || t.type === 'overlay');
 
-        const audioItems = tracks
-            .filter(t => t.type === 'audio')
-            .flatMap(t => t.items);
+        const videoItems = videoTracks.flatMap(t =>
+            t.items.map(item => ({ ...item, isTrackMuted: t.isMuted }))
+        );
+
+        const audioTracks = tracks.filter(t => t.type === 'audio');
+
+        const audioItems = audioTracks.flatMap(t =>
+            t.items.map(item => ({ ...item, isTrackMuted: t.isMuted }))
+        );
 
         // Sort items by timeline start time
         const sortedVideoItems = [...videoItems].sort((a, b) => a.start - b.start);
         const sortedAudioItems = [...audioItems].sort((a, b) => a.start - b.start);
 
-        const mapItemToPreviewClip = (item: TimelineItem): PreviewClip => {
+        const mapItemToPreviewClip = (item: TimelineItem & { isTrackMuted?: boolean }): PreviewClip => {
             // Find asset
             // Note: item.resourceId might be the name or ID.
             const asset = assets.find(a => a.name === item.resourceId) || {
@@ -56,12 +64,15 @@ export const useTimelinePreview = (
 
             const isImage = item.resourceId.match(/\.(jpg|jpeg|png|webp|gif)$/i);
 
+            // If track is muted, volume is 0. Otherwise use item volume or default 1.
+            const finalVolume = item.isTrackMuted ? 0 : (item.volume ?? 1);
+
             return {
                 id: item.id,
                 url: `http://localhost:3001${asset.url}`, // Ensure URL is absolute
                 start: item.startOffset,
                 end: item.startOffset + item.duration * (item.playbackRate || 1), // Source end time
-                volume: item.volume ?? 1,
+                volume: finalVolume,
                 playbackRate: item.playbackRate ?? 1,
                 label: asset.name,
                 timelineStart: item.start,

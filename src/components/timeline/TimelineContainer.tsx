@@ -13,6 +13,10 @@ interface TimelineContainerProps {
     onItemTrim: (trackId: string, itemId: string, newStartTime: number, newDuration: number, trimStart: boolean) => void;
     selectedItemId: string | null;
     onItemClick: (itemId: string) => void;
+    getAssetUrl: (resourceId: string) => string;
+    activeTool?: 'cursor' | 'split';
+    onSplit?: (id: string, time: number) => void;
+    onToggleMute?: (trackId: string) => void;
 }
 
 export const TimelineContainer: React.FC<TimelineContainerProps> = ({
@@ -24,10 +28,18 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     onItemMove,
     onItemTrim,
     selectedItemId,
-    onItemClick
+    onItemClick,
+    getAssetUrl,
+    activeTool = 'cursor',
+    onSplit,
+    onToggleMute
 }) => {
     const [pixelsPerSecond, setPixelsPerSecond] = useState(50);
     const containerRef = useRef<HTMLDivElement>(null);
+    const rulerRef = useRef<HTMLDivElement>(null);
+
+    const totalWidth = Math.max(duration + 10, 60) * pixelsPerSecond + 200;
+
 
     const handleWheel = (e: React.WheelEvent) => {
         if (e.ctrlKey) {
@@ -37,26 +49,30 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
         }
     };
 
-    // Placeholder for handleScroll, if it's not defined elsewhere
-    const handleScroll = () => {
-        // Implement scroll logic if needed
+    // Sync horizontal scroll
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (rulerRef.current) {
+            rulerRef.current.scrollLeft = e.currentTarget.scrollLeft;
+        }
     };
 
     return (
         <div className="flex flex-col h-full bg-[#1e1e1e] select-none text-xs" onWheel={handleWheel}>
             <TimelineRuler
+                ref={rulerRef}
                 duration={duration}
                 pixelsPerSecond={pixelsPerSecond}
                 currentTime={currentTime}
                 onSeek={onSeek}
+                width={totalWidth}
             />
 
             <div
                 ref={containerRef}
-                className="flex-1 overflow-y-auto overflow-x-hidden relative custom-scrollbar"
+                className={`flex-1 overflow-y-auto overflow-x-auto relative custom-scrollbar ${activeTool === 'split' ? 'cursor-crosshair' : ''}`}
                 onScroll={handleScroll}
             >
-                <div className="relative min-w-full" style={{ width: Math.max(duration + 10, 60) * pixelsPerSecond + 200 }}>
+                <div className="relative min-w-full" style={{ width: totalWidth }}>
                     {tracks.map(track => (
                         <TimelineTrack
                             key={track.id}
@@ -68,6 +84,10 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
                             selectedItemId={selectedItemId}
                             onItemClick={onItemClick}
                             getAssetName={(id) => id}
+                            getAssetUrl={getAssetUrl}
+                            activeTool={activeTool}
+                            onSplit={onSplit}
+                            onToggleMute={onToggleMute}
                         />
                     ))}
 

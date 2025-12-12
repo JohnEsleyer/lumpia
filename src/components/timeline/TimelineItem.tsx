@@ -10,8 +10,28 @@ interface TimelineItemProps {
     onTrim: (id: string, newStartOffset: number, newDuration: number, trimStart: boolean) => void;
     onClick: (id: string) => void;
     selected: boolean;
-    name: string; // Asset name for display
+    name: string;
+    variant: 'video' | 'audio' | 'overlay';
+    assetUrl?: string;
+    activeTool: 'cursor' | 'split';
+    onSplit?: (id: string, time: number) => void;
 }
+
+const getVariantStyles = (variant: 'video' | 'audio' | 'overlay', selected: boolean) => {
+    const baseStyles = "absolute rounded-md overflow-hidden border-2";
+    const selectedStyle = selected ? "border-yellow-400 z-10 shadow-[0_0_0_1px_rgba(250,204,21,0.5)]" : "border-opacity-50";
+
+    switch (variant) {
+        case 'video':
+            return `${baseStyles} ${selectedStyle} ${selected ? 'bg-indigo-900/80' : 'bg-indigo-900/40 border-indigo-500/30'}`;
+        case 'audio':
+            return `${baseStyles} ${selectedStyle} ${selected ? 'bg-emerald-900/80' : 'bg-emerald-900/40 border-emerald-500/30'}`;
+        case 'overlay':
+            return `${baseStyles} ${selectedStyle} ${selected ? 'bg-purple-900/80' : 'bg-purple-900/40 border-purple-500/30'}`;
+        default:
+            return `${baseStyles} ${selectedStyle} bg-slate-800 border-slate-600`;
+    }
+};
 
 export const TimelineItem: React.FC<TimelineItemProps> = ({
     item,
@@ -21,18 +41,120 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     onTrim,
     onClick,
     selected,
-    name
+    name,
+    variant,
+    assetUrl,
+    activeTool,
+    onSplit
 }) => {
     const [isDragging, setIsDragging] = useState(false);
     const [dragStartX, setDragStartX] = useState(0);
     const [originalItemStart, setOriginalItemStart] = useState(0);
     const itemRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [waveform, setWaveform] = useState<number[] | null>(null);
 
     const width = item.duration * pixelsPerSecond;
     const left = item.start * pixelsPerSecond;
 
+    useEffect(() => {
+        if (variant === 'audio' && assetUrl) {
+            let isActive = true;
+
+            const fetchAudio = async () => {
+                try {
+                    const response = await fetch(assetUrl);
+                    if (!response.ok) throw new Error(`Failed to fetch audio: ${response.statusText}`);
+
+                    const arrayBuffer = await response.arrayBuffer();
+                    if (!isActive) return;
+
+                    // Use OfflineAudioContext for data decoding - no user gesture required
+                    const offlineContext = new OfflineAudioContext(1, 1, 44100);
+                    const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
+
+                    const rawData = audioBuffer.getChannelData(0); // Left channel
+                    const samples = 100; // Number of bars to draw
+                    const blockSize = Math.floor(rawData.length / samples);
+                    const filteredData = [];
+
+                    for (let i = 0; i < samples; i++) {
+                        let sum = 0;
+                        for (let j = 0; j < blockSize; j++) {
+                            // Use Root Mean Square for better representation of "energy"
+                            const val = rawData[blockSize * i + j];
+                            sum += val * val;
+                        }
+                        const rms = Math.sqrt(sum / blockSize);
+                        filteredData.push(rms);
+                    }
+
+                    // Normalize
+                    const max = Math.max(...filteredData);
+                    const normalizedData = max > 0 ? filteredData.map(n => n / max) : filteredData;
+
+                    if (isActive) {
+                        setWaveform(normalizedData);
+                    }
+                } catch (e) {
+                    console.error("Failed to load waveform for", assetUrl, e);
+                }
+            };
+
+            fetchAudio();
+
+            return () => {
+                isActive = false;
+            };
+        }
+    }, [assetUrl, variant]);
+
+    // Draw waveform
+    useEffect(() => {
+        if (waveform && canvasRef.current) {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                const w = canvas.width;
+                const h = canvas.height;
+                ctx.clearRect(0, 0, w, h);
+
+                // Make waveform higher contrast
+                ctx.fillStyle = selected ? '#ffffff' : '#a7f3d0'; // White when selected, Emerald-200 otherwise
+
+                const barWidth = w / waveform.length;
+                const gap = 1;
+
+                waveform.forEach((val, index) => {
+                    // Min height for visibility
+                    const barHeight = Math.max(2, val * h * 0.8);
+                    const x = index * barWidth;
+                    // Center the waveform vertically
+                    const y = (h - barHeight) / 2;
+                    ctx.fillRect(x, y, barWidth - gap, barHeight);
+                });
+            }
+        }
+    }, [waveform, width, height, selected]);
+
     const handleMouseDown = (e: React.MouseEvent) => {
         e.stopPropagation();
+
+        if (activeTool === 'split' && onSplit) {
+            // Calculate split time
+            // e.clientX is relative to viewport.
+            // item.left is relative to track.
+            // We need text local to item or consistent coordinate system.
+            // Item is absolute position left=item.start*pps.
+            // Click on item.
+            const rect = e.currentTarget.getBoundingClientRect();
+            const clickXInsideItem = e.clientX - rect.left;
+            const clickTimeOffset = clickXInsideItem / pixelsPerSecond;
+            const splitTime = item.start + clickTimeOffset;
+            onSplit(item.id, splitTime);
+            return;
+        }
+
         onClick(item.id);
         setIsDragging(true);
         setDragStartX(e.clientX);
@@ -66,19 +188,32 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     return (
         <div
             ref={itemRef}
-            className={`absolute rounded-md overflow-hidden border-2 ${selected ? 'border-yellow-500 z-10' : 'border-slate-600 bg-slate-800'}`}
+            className={getVariantStyles(variant, selected)}
             style={{
                 left: `${left}px`,
                 width: `${width}px`,
                 height: `${height - 4}px`, // Slight padding
                 top: '2px',
-                cursor: isDragging ? 'grabbing' : 'grab'
+                cursor: activeTool === 'split' ? 'crosshair' : (isDragging ? 'grabbing' : 'grab')
             }}
             onMouseDown={handleMouseDown}
         >
-            <div className="flex items-center h-full px-2 gap-2 bg-slate-700/50 hover:bg-slate-700/80 transition-colors pointer-events-none select-none">
-                <GripVertical size={14} className="text-slate-400" />
-                <span className="text-xs text-white truncate">{name}</span>
+            {/* Waveform Background for Audio */}
+            {variant === 'audio' && (
+                <canvas
+                    ref={canvasRef}
+                    className="absolute inset-0 w-full h-full pointer-events-none opacity-80"
+                    width={Math.ceil(width)}
+                    height={Math.ceil(height)}
+                />
+            )}
+
+            <div className={`flex items-center h-full px-2 gap-2 transition-colors pointer-events-none select-none relative z-10 ${variant === 'video' ? 'text-indigo-200' :
+                variant === 'audio' ? 'text-emerald-100' :
+                    'text-purple-200'
+                }`}>
+                <GripVertical size={14} className="opacity-50" />
+                <span className="text-xs font-medium truncate drop-shadow-md">{name}</span>
             </div>
 
             {/* Simple trim handles - implementation can be expanded later */}
