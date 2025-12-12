@@ -1,3 +1,4 @@
+// FILE: src/components/inspector/VideoTimelineSlider.tsx
 import React, { useRef, useState } from 'react';
 
 interface VideoTimelineSliderProps {
@@ -6,7 +7,7 @@ interface VideoTimelineSliderProps {
     endOffset: number;
     filmstrip?: string[];
     onRangeChange: (start: number, end: number) => void;
-    onSeek?: (time: number) => void;
+    onSeek?: (time: number) => void; // Keeping definition but removing internal use during drag
 }
 
 export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
@@ -15,7 +16,8 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
     endOffset,
     filmstrip = [],
     onRangeChange,
-    onSeek
+    // onSeek is kept for API surface but internal drag logic relies on onRangeChange
+    // which triggers complex timeline calculation in the parent inspector.
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dragMode, setDragMode] = useState<'start' | 'end' | 'slip' | null>(null);
@@ -47,10 +49,10 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
 
         if (dragMode === 'start') {
             newStart = Math.max(0, Math.min(initialDragState.current.start + deltaSeconds, newEnd - minDuration));
-            if (onSeek) onSeek(newStart);
+            // Removed: if (onSeek) onSeek(newStart);
         } else if (dragMode === 'end') {
             newEnd = Math.min(duration, Math.max(initialDragState.current.end + deltaSeconds, newStart + minDuration));
-            if (onSeek) onSeek(newEnd);
+            // Removed: if (onSeek) onSeek(newEnd);
         } else if (dragMode === 'slip') {
             // "Slip" edit: move the window without changing duration
             const span = newEnd - newStart;

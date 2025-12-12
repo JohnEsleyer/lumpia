@@ -1,3 +1,4 @@
+// FILE: src/components/inspector/VideoTrimmer.tsx
 import React, { useState } from 'react';
 import { Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -32,7 +33,7 @@ export const VideoTrimmer: React.FC<VideoTrimmerProps> = ({
     const handleRangeChange = (newStart: number, newEnd: number) => {
         setStart(newStart);
         setEnd(newEnd);
-        onPreviewChange(newStart, newEnd);
+        onPreviewChange(newStart, newEnd); // This triggers the seek in the inspector
     };
 
     const nudge = (type: 'start' | 'end', dir: 1 | -1) => {
@@ -68,8 +69,7 @@ export const VideoTrimmer: React.FC<VideoTrimmerProps> = ({
                 endOffset={end}
                 filmstrip={filmstrip}
                 onRangeChange={handleRangeChange}
-                // Optional: When dragging handle, seek the video to that point for visual feedback
-                onSeek={() => onPreviewChange(start, end)}
+            // Removed the redundant onSeek prop, relying entirely on handleRangeChange -> onPreviewChange
             />
 
             {/* Precision Controls */}

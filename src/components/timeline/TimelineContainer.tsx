@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { TimelineTrack } from './TimelineTrack';
 import { TimelineRuler } from './TimelineRuler';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
@@ -43,8 +44,8 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     onItemTrim,
     selectedItemId,
     onItemClick,
-    getAssetData, // P2.1
-    onAssetDrop, // P1.2
+    getAssetData,
+    onAssetDrop,
     activeTool = 'cursor',
     onSplit,
     onToggleMute
@@ -52,6 +53,11 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     const [pixelsPerSecond, setPixelsPerSecond] = useState(50);
     const containerRef = useRef<HTMLDivElement>(null);
     const rulerRef = useRef<HTMLDivElement>(null);
+
+    // --- Panning State & Refs ---
+    const [isPanning, setIsPanning] = useState(false);
+    const panStart = useRef<{ scrollLeft: number, clientX: number, pointerId: number }>({ scrollLeft: 0, clientX: 0, pointerId: -1 });
+    // -----------------------------
 
     const totalWidth = Math.max(duration + 10, 60) * pixelsPerSecond + 200;
 
@@ -71,6 +77,75 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
         }
     };
 
+    // --- Panning Logic ---
+    const handlePanStart = (e: React.PointerEvent<HTMLDivElement>) => {
+        // Prevent panning when using the Split tool or if not the primary button (left click)
+        if (activeTool === 'split' || e.button !== 0) return;
+
+        // Prevent browser's native drag selection
+        e.preventDefault();
+
+        setIsPanning(true);
+        panStart.current = {
+            scrollLeft: e.currentTarget.scrollLeft,
+            clientX: e.clientX,
+            pointerId: e.pointerId,
+        };
+
+        // Capture pointer
+        e.currentTarget.setPointerCapture(e.pointerId);
+    };
+
+    // Global listeners for mouse move/up when panning is active
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container || !isPanning) return;
+
+        const capturedPointerId = panStart.current.pointerId;
+
+        // We use standard DOM PointerEvents here, not React synthetic events
+        const handlePanMove = (e: PointerEvent) => {
+            if (e.pointerId !== capturedPointerId) return;
+
+            e.preventDefault();
+            const deltaX = e.clientX - panStart.current.clientX;
+            // Update scroll position: movement is opposite mouse direction (panning)
+            container.scrollLeft = panStart.current.scrollLeft - deltaX;
+        };
+
+        const handlePanEnd = (e: PointerEvent) => {
+            if (e.pointerId !== capturedPointerId) return;
+
+            setIsPanning(false);
+
+            // Release pointer capture (handled by React in modern browsers, but good practice here)
+            if (container.hasPointerCapture(e.pointerId)) {
+                container.releasePointerCapture(e.pointerId);
+            }
+        };
+
+        window.addEventListener('pointermove', handlePanMove);
+        window.addEventListener('pointerup', handlePanEnd);
+
+        return () => {
+            window.removeEventListener('pointermove', handlePanMove);
+            window.removeEventListener('pointerup', handlePanEnd);
+        };
+    }, [isPanning]);
+    // -----------------------------
+
+    // Updated Cursor class based on state and tool
+    const cursorClass = activeTool === 'split'
+        ? 'cursor-crosshair'
+        : (isPanning ? 'cursor-grabbing' : 'cursor-grab');
+
+    // FIX 1.1: Since resourceId is the asset name, this is a valid minimal implementation.
+    const getAssetName = useCallback((resourceId: string): string => {
+        const asset = getAssetData(resourceId);
+        return asset?.name || resourceId;
+    }, [getAssetData]);
+
+
     return (
         <div className="flex flex-col h-full bg-[#1e1e1e] select-none text-xs" onWheel={handleWheel}>
             <TimelineRuler
@@ -84,8 +159,9 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
 
             <div
                 ref={containerRef}
-                className={`flex-1 overflow-y-auto overflow-x-auto relative custom-scrollbar ${activeTool === 'split' ? 'cursor-crosshair' : ''}`}
+                className={`flex-1 overflow-y-auto overflow-x-auto relative custom-scrollbar ${cursorClass}`}
                 onScroll={handleScroll}
+                onPointerDown={handlePanStart} // Use onPointerDown
             >
                 <div className="relative min-w-full" style={{ width: totalWidth }}>
                     {tracks.map(track => (
@@ -98,14 +174,9 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
                             onItemTrim={(itemId, newStart, newDur, trimStart) => onItemTrim(track.id, itemId, newStart, newDur, trimStart)}
                             selectedItemId={selectedItemId}
                             onItemClick={onItemClick}
-                            getAssetName={(id) => id}
-
-                            // P2.1: Pass the new asset data getter
+                            getAssetName={getAssetName} // FIX: Pass the required prop
                             getAssetData={getAssetData}
-
-                            // P1.2: Pass the new drop handler
                             onAssetDrop={onAssetDrop}
-
                             activeTool={activeTool}
                             onSplit={onSplit}
                             onToggleMute={onToggleMute}
