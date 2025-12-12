@@ -50,8 +50,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     onSplit
 }) => {
     const [isDragging, setIsDragging] = useState(false);
-    const [dragStartX, setDragStartX] = useState(0);
-    const [originalItemStart, setOriginalItemStart] = useState(0);
+    const dragStartRef = useRef<{ clientX: number, start: number, pointerId: number } | null>(null);
     const itemRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [waveform, setWaveform] = useState<number[] | null>(null);
@@ -83,7 +82,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             setWaveform(null);
             return;
         }
-
+        // ... (Waveform generation logic remains unchanged) ...
         let isActive = true;
 
         const fetchAudio = async () => {
@@ -166,11 +165,12 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     // --- End Waveform Logic ---
 
 
-    const handleMouseDown = (e: React.MouseEvent) => {
-        e.stopPropagation();
+    // --- Item Drag Logic ---
+    const handlePointerDown = (e: React.PointerEvent) => {
+        e.stopPropagation(); // CRITICAL: Prevent event from reaching TimelineContainer pan listener
 
+        // Handle Split tool interaction first
         if (activeTool === 'split' && onSplit) {
-            // Calculate split time
             const rect = e.currentTarget.getBoundingClientRect();
             const clickXInsideItem = e.clientX - rect.left;
             const clickTimeOffset = clickXInsideItem / pixelsPerSecond;
@@ -180,39 +180,104 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
         }
 
         onClick(item.id);
+
+        // Only proceed to drag if cursor tool and left button
+        if (activeTool !== 'cursor' || e.button !== 0) {
+            return;
+        }
+
+        e.preventDefault(); // Prevent text selection/native drag
+
         setIsDragging(true);
-        setDragStartX(e.clientX);
-        setOriginalItemStart(item.start);
+        dragStartRef.current = { clientX: e.clientX, start: item.start, pointerId: e.pointerId };
+
+        // Capture pointer to track movement outside the element bounds
+        (e.target as Element).setPointerCapture(e.pointerId);
     };
 
+    // Centralized Pointer Event Drag Logic
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            if (!isDragging) return;
-            const deltaX = e.clientX - dragStartX;
+        const itemElement = itemRef.current;
+        if (!isDragging || !itemElement || !dragStartRef.current) return;
+
+        const startState = dragStartRef.current;
+        const capturedPointerId = startState.pointerId;
+
+        const handlePointerMove = (e: PointerEvent) => {
+            if (e.pointerId !== capturedPointerId) return;
+
+            const deltaX = e.clientX - startState.clientX;
             const deltaSeconds = deltaX / pixelsPerSecond;
-            const newStart = Math.max(0, originalItemStart + deltaSeconds);
+            const newStart = Math.max(0, startState.start + deltaSeconds);
             onDrag(item.id, newStart);
         };
 
-        const handleMouseUp = () => {
+        const handlePointerUp = (e: PointerEvent) => {
+            if (e.pointerId !== capturedPointerId) return;
+
             setIsDragging(false);
+            dragStartRef.current = null;
+            itemElement.releasePointerCapture(capturedPointerId);
         };
 
-        if (isDragging) {
-            window.addEventListener('mousemove', handleMouseMove);
-            window.addEventListener('mouseup', handleMouseUp);
-        }
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
 
         return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
         };
-    }, [isDragging, dragStartX, originalItemStart, pixelsPerSecond, onDrag, item.id]);
+    }, [isDragging, item.id, item.start, pixelsPerSecond, onDrag]);
+
+
+    // --- Trim Handle Logic (Refactored to Pointer Events) ---
+    const startTrimDrag = (e: React.PointerEvent, trimStart: boolean) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        const startX = e.clientX;
+        const originalDuration = item.duration;
+        const originalOffset = item.startOffset;
+        const pointerId = e.pointerId;
+
+        // Capture pointer
+        (e.target as Element).setPointerCapture(pointerId);
+
+        const handlePointerMove = (moveEvent: PointerEvent) => {
+            const deltaX = moveEvent.clientX - startX;
+            const deltaSeconds = deltaX / pixelsPerSecond;
+
+            if (trimStart) {
+                // Trim Start
+                // Allow trimming up to duration
+                const newDuration = Math.max(0.1, originalDuration - deltaSeconds);
+                const newOffset = Math.max(0, originalOffset + deltaSeconds);
+
+                if (newDuration > 0.1) {
+                    onTrim(item.id, newOffset, newDuration, true);
+                }
+            } else {
+                // Trim End
+                const newDuration = Math.max(0.1, originalDuration + deltaSeconds);
+                onTrim(item.id, item.startOffset, newDuration, false);
+            }
+        };
+
+        const handlePointerUp = (upEvent: PointerEvent) => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+            // Release capture
+            (e.target as Element).releasePointerCapture(pointerId);
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+    };
 
     return (
         <div
             ref={itemRef}
-            className={getVariantStyles(variant, selected)}
+            className={`${getVariantStyles(variant, selected)} timeline-item`}
             style={{
                 left: `${left}px`,
                 width: `${width}px`,
@@ -220,7 +285,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
                 top: '2px',
                 cursor: activeTool === 'split' ? 'crosshair' : (isDragging ? 'grabbing' : 'grab')
             }}
-            onMouseDown={handleMouseDown}
+            onPointerDown={handlePointerDown} // Using Pointer Down for item move/select/split
         >
             {/* P2.5: Filmstrip Background for Video */}
             {variant === 'video' && framesToDisplay.length > 0 && (
@@ -258,62 +323,14 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
                 <span className="text-xs font-medium truncate drop-shadow-md">{name}</span>
             </div>
 
-            {/* Simple trim handles - implementation can be expanded later */}
-            {/* Trim Handles */}
+            {/* Trim Handles (Now using onPointerDown) */}
             <div
                 className="absolute left-0 top-0 bottom-0 w-2 hover:bg-yellow-500/50 cursor-ew-resize z-20"
-                onMouseDown={(e) => {
-                    e.stopPropagation();
-                    const startX = e.clientX;
-                    const originalDuration = item.duration;
-                    const originalOffset = item.startOffset;
-
-                    const handleMouseMove = (moveEvent: MouseEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaSeconds = deltaX / pixelsPerSecond;
-
-                        // Limit start trim so we don't exceed duration or go below 0 offset (if applicable)
-                        // Allow trimming up to duration
-                        const newDuration = Math.max(0.1, originalDuration - deltaSeconds);
-                        const newOffset = Math.max(0, originalOffset + deltaSeconds);
-
-                        if (newDuration > 0.1) {
-                            onTrim(item.id, newOffset, newDuration, true);
-                        }
-                    };
-
-                    const handleMouseUp = () => {
-                        window.removeEventListener('mousemove', handleMouseMove);
-                        window.removeEventListener('mouseup', handleMouseUp);
-                    };
-
-                    window.addEventListener('mousemove', handleMouseMove);
-                    window.addEventListener('mouseup', handleMouseUp);
-                }}
+                onPointerDown={(e) => startTrimDrag(e as any, true)}
             />
             <div
                 className="absolute right-0 top-0 bottom-0 w-2 hover:bg-yellow-500/50 cursor-ew-resize z-20"
-                onMouseDown={(e) => {
-                    e.stopPropagation();
-                    const startX = e.clientX;
-                    const originalDuration = item.duration;
-
-                    const handleMouseMove = (moveEvent: MouseEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaSeconds = deltaX / pixelsPerSecond;
-                        const newDuration = Math.max(0.1, originalDuration + deltaSeconds);
-
-                        onTrim(item.id, item.startOffset, newDuration, false);
-                    };
-
-                    const handleMouseUp = () => {
-                        window.removeEventListener('mousemove', handleMouseMove);
-                        window.removeEventListener('mouseup', handleMouseUp);
-                    };
-
-                    window.addEventListener('mousemove', handleMouseMove);
-                    window.addEventListener('mouseup', handleMouseUp);
-                }}
+                onPointerDown={(e) => startTrimDrag(e as any, false)}
             />
         </div>
     );

@@ -1,3 +1,5 @@
+// src/hooks/useTimelineLogic.ts
+
 import { useState, useCallback, useMemo } from 'react';
 import { type TimelineTrack, type TimelineItem, type Project } from '../types';
 
@@ -51,6 +53,20 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                     volume: 1,
                     playbackRate: 1
                 };
+
+                // Check for immediate collision at insertion point
+                const itemEnd = newItem.start + newItem.duration;
+                const hasCollision = track.items.some(existing => {
+                    const existingEnd = existing.start + existing.duration;
+                    return (newItem.start < existingEnd && itemEnd > existing.start);
+                });
+
+                if (hasCollision) {
+                    // Simple collision handling: insert immediately after the last item, or reject if timeline is full
+                    const maxEnd = track.items.reduce((max, item) => Math.max(max, item.start + item.duration), 0);
+                    newItem.start = maxEnd;
+                }
+
                 return { ...track, items: [...track.items, newItem] };
             }
             return track;
@@ -65,77 +81,73 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
 
     const moveClip = useCallback((trackId: string, itemId: string, newStart: number) => {
         setTracks(prev => prev.map(track => {
-            if (track.id === trackId) {
-                const item = track.items.find(i => i.id === itemId);
-                if (!item) return track;
+            if (track.id !== trackId) return track;
 
-                // 1. Collision & Snapping (Simplified bounds checking)
-                const SNAP_THRESHOLD = 0.5; // seconds
-                const otherItems = track.items.filter(i => i.id !== itemId).sort((a, b) => a.start - b.start);
+            const item = track.items.find(i => i.id === itemId);
+            if (!item) return track;
 
-                let proposedStart = Math.max(0, newStart);
-                const proposedEnd = proposedStart + item.duration;
+            const SNAP_THRESHOLD = 0.2; // seconds (FR-3.1.2)
+            let proposedStart = Math.max(0, newStart);
+            const proposedEnd = proposedStart + item.duration;
 
-                let leftBound = 0;
-                let rightBound = Infinity;
+            const otherItems = track.items.filter(i => i.id !== itemId);
 
-                // Find the two items surrounding the proposed center
-                const sortedOthers = [...otherItems].sort((a, b) => a.start - b.start);
+            // 1. Apply Snapping (FR-3.1.2)
+            for (const other of otherItems) {
+                const otherEnd = other.start + other.duration;
 
-                // Find immediate left neighbor's end time
-                for (const other of sortedOthers) {
-                    if (other.start + other.duration <= proposedStart + SNAP_THRESHOLD) {
-                        leftBound = Math.max(leftBound, other.start + other.duration);
-                    }
+                // Snap to start of previous item's end
+                if (Math.abs(proposedStart - otherEnd) < SNAP_THRESHOLD) {
+                    proposedStart = otherEnd;
                 }
-
-                // Find immediate right neighbor's start time
-                for (const other of sortedOthers) {
-                    if (other.start >= proposedEnd - SNAP_THRESHOLD) {
-                        rightBound = Math.min(rightBound, other.start);
-                    }
+                // Snap to end of next item's start
+                if (Math.abs(proposedEnd - other.start) < SNAP_THRESHOLD) {
+                    proposedStart = other.start - item.duration;
                 }
-
-                // Clamp to bounds
-                let constrainedStart = Math.max(leftBound, Math.min(proposedStart, rightBound - item.duration));
-
-                // Apply Snapping
-                if (Math.abs(constrainedStart - leftBound) < SNAP_THRESHOLD) {
-                    constrainedStart = leftBound;
-                } else if (Math.abs((constrainedStart + item.duration) - rightBound) < SNAP_THRESHOLD) {
-                    constrainedStart = rightBound - item.duration;
-                }
-
-
-                return {
-                    ...track,
-                    items: track.items.map(i =>
-                        i.id === itemId ? { ...i, start: constrainedStart } : i
-                    )
-                };
             }
-            return track;
+
+            // Ensure start time is clamped to zero after snapping
+            proposedStart = Math.max(0, proposedStart);
+
+            // 2. Collision Check (FR-3.1.3)
+            const itemEnd = proposedStart + item.duration;
+            const hasCollision = otherItems.some(other => {
+                const otherEnd = other.start + other.duration;
+                // Collision occurs if the time ranges overlap
+                return (proposedStart < otherEnd && itemEnd > other.start);
+            });
+
+            if (hasCollision) {
+                // If collision occurs, reject the move
+                return track;
+            }
+
+            // 3. Commit Move (FR-3.1.4)
+            return {
+                ...track,
+                items: track.items.map(i => i.id === itemId ? { ...i, start: proposedStart } : i)
+            };
         }));
     }, []);
 
     const trimClip = useCallback((trackId: string, itemId: string, newOffset: number, newDuration: number, trimStart: boolean) => {
         setTracks(prev => prev.map(track => {
             if (track.id === trackId) {
-                // Find neighbors
                 const otherItems = track.items.filter(i => i.id !== itemId).sort((a, b) => a.start - b.start);
                 const item = track.items.find(i => i.id === itemId);
                 if (!item) return track;
 
-                // Determine bounds
+                // Determine collision bounds
                 let prevEnd = 0;
                 let nextStart = Infinity;
+                const SNAP_THRESHOLD = 0.1;
 
-                // Find immediate neighbors
+                // Find immediate neighbors' boundaries
                 for (const other of otherItems) {
-                    if (other.start + other.duration <= item.start + 0.001) {
+                    if (other.start + other.duration <= item.start + SNAP_THRESHOLD) {
                         prevEnd = Math.max(prevEnd, other.start + other.duration);
                     }
-                    if (other.start >= item.start + item.duration - 0.001) {
+                    if (other.start >= item.start + item.duration - SNAP_THRESHOLD) {
                         nextStart = Math.min(nextStart, other.start);
                     }
                 }
@@ -145,35 +157,45 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                     items: track.items.map(i => {
                         if (i.id === itemId) {
                             if (trimStart) {
-                                const shift = newOffset - i.startOffset;
-                                let updatedStart = i.start + shift;
-                                let updatedDuration = newDuration;
+                                // FR-3.2.2: Trimming start shifts position and updates offset
 
-                                // Constraint: updatedStart >= prevEnd
+                                // Calculate the desired timeline start based on the source shift
+                                const sourceShift = newOffset - i.startOffset;
+                                let updatedStart = i.start + (sourceShift / (i.playbackRate || 1));
+
+                                // Apply collision constraint: updatedStart >= prevEnd
                                 if (updatedStart < prevEnd) {
-                                    // Calculate maximum allowed shift
-                                    const maxShift = item.start - prevEnd;
+                                    // Snap start to previous clip end
                                     updatedStart = prevEnd;
-                                    updatedDuration = item.duration + maxShift;
-                                    newOffset = item.startOffset - maxShift;
 
-                                    if (newDuration < updatedDuration) return i; // Prevent invalid backwards trim past neighbor
+                                    // Calculate the resulting duration (expanded backwards)
+                                    const timeCorrection = prevEnd - i.start;
+                                    newDuration = i.duration + timeCorrection;
+
+                                    // Calculate the resulting offset
+                                    const requiredOffsetShift = timeCorrection * (i.playbackRate || 1);
+                                    newOffset = i.startOffset - requiredOffsetShift;
                                 }
+
+                                // Ensure new duration doesn't exceed the timeline slot (nextStart)
+                                newDuration = Math.min(newDuration, nextStart - updatedStart);
 
                                 return {
                                     ...i,
                                     start: updatedStart,
                                     startOffset: newOffset,
-                                    duration: updatedDuration
+                                    duration: newDuration
                                 };
 
                             } else {
-                                // Trimming End
+                                // FR-3.2.3: Trimming End only changes duration
                                 let updatedDuration = newDuration;
-                                // Constraint: start + duration <= nextStart
+
+                                // FR-3.2.4: Constraint: start + duration <= nextStart
                                 if (i.start + updatedDuration > nextStart) {
                                     updatedDuration = nextStart - i.start;
                                 }
+
                                 return { ...i, duration: updatedDuration };
                             }
                         }
@@ -209,7 +231,8 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                     id: crypto.randomUUID(),
                     start: splitTime,
                     duration: secondHalfDuration,
-                    startOffset: itemToSplit.startOffset + firstHalfDuration * (itemToSplit.playbackRate || 1) // Apply speed to calculate source offset
+                    // FR-3.3.2: Correctly calculate new source offset based on playback rate
+                    startOffset: itemToSplit.startOffset + firstHalfDuration * (itemToSplit.playbackRate || 1)
                 };
 
                 // Replace original item with first half, append second half

@@ -1,3 +1,4 @@
+// src/components/timeline/TimelineContainer.tsx
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { TimelineTrack } from './TimelineTrack';
@@ -21,7 +22,7 @@ interface TimelineContainerProps {
     onItemMove: (itemId: string, newTrackId: string, newStartTime: number) => void;
     onItemTrim: (trackId: string, itemId: string, newStartTime: number, newDuration: number, trimStart: boolean) => void;
     selectedItemId: string | null;
-    onItemClick: (itemId: string) => void;
+    onItemClick: (itemId: string | null) => void; // Updated to allow null
 
     // P2.1: Replaced getAssetUrl with getAssetData
     getAssetData: (resourceId: string) => LibraryAsset | undefined;
@@ -82,8 +83,16 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
         // Prevent panning when using the Split tool or if not the primary button (left click)
         if (activeTool === 'split' || e.button !== 0) return;
 
+
+        const targetElement = e.target as Element;
+        if (targetElement.closest('.timeline-item')) {
+            // The click started inside a clip. We must let the clip handle the interaction.
+            return;
+        }
         // Prevent browser's native drag selection
         e.preventDefault();
+
+
 
         setIsPanning(true);
         panStart.current = {
@@ -134,6 +143,15 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     }, [isPanning]);
     // -----------------------------
 
+    // FR-3.4.1: Handler for deselecting when clicking empty space
+    const handleTrackAreaClick = (e: React.MouseEvent) => {
+        // If the click target is the container itself, deselect
+        if (e.target === e.currentTarget) {
+            onItemClick(null);
+        }
+    };
+
+
     // Updated Cursor class based on state and tool
     const cursorClass = activeTool === 'split'
         ? 'cursor-crosshair'
@@ -162,6 +180,7 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
                 className={`flex-1 overflow-y-auto overflow-x-auto relative custom-scrollbar ${cursorClass}`}
                 onScroll={handleScroll}
                 onPointerDown={handlePanStart} // Use onPointerDown
+                onClick={handleTrackAreaClick} // Add deselect logic
             >
                 <div className="relative min-w-full" style={{ width: totalWidth }}>
                     {tracks.map(track => (
