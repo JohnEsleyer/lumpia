@@ -1,23 +1,24 @@
 // FILE: src/components/inspector/VideoTimelineSlider.tsx
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 
 interface VideoTimelineSliderProps {
     duration: number; // Source duration in seconds
-    startOffset: number;
-    endOffset: number;
+    startOffset: number; // Current selection start (controlled)
+    endOffset: number; // Current selection end (controlled)
+    currentTimeSource: number; // Source time (derived from global timeline time)
     filmstrip?: string[];
     onRangeChange: (start: number, end: number) => void;
-    onSeek?: (time: number) => void; // Keeping definition but removing internal use during drag
+    onSeekSource: (sourceTime: number) => void; // New: Seeks the preview to a specific source time
 }
 
 export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
     duration,
     startOffset,
     endOffset,
+    currentTimeSource,
     filmstrip = [],
     onRangeChange,
-    // onSeek is kept for API surface but internal drag logic relies on onRangeChange
-    // which triggers complex timeline calculation in the parent inspector.
+    onSeekSource,
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [dragMode, setDragMode] = useState<'start' | 'end' | 'slip' | null>(null);
@@ -26,6 +27,9 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
 
     const toPercent = (time: number) => Math.max(0, Math.min(100, (time / duration) * 100));
 
+    // --- Interaction Handlers ---
+
+    // Handles mouse down on handles or slip region
     const handlePointerDown = (e: React.PointerEvent, mode: 'start' | 'end' | 'slip') => {
         e.preventDefault();
         e.stopPropagation();
@@ -34,6 +38,23 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
         initialDragState.current = { start: startOffset, end: endOffset };
         (e.target as Element).setPointerCapture(e.pointerId);
     };
+
+    // Handles scrubbing/seeking when clicking on the timeline background
+    const handleBackgroundClick = useCallback((e: React.MouseEvent) => {
+        if (!containerRef.current || dragMode) return;
+
+        const rect = containerRef.current.getBoundingClientRect();
+        // Calculate position relative to the left of the container
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+
+        const clickPercent = clickX / width;
+        const sourceTime = duration * clickPercent;
+
+        // Clamp seek time to the source duration and trigger seek in parent
+        onSeekSource(Math.max(0, Math.min(sourceTime, duration)));
+    }, [dragMode, duration, onSeekSource]);
+
 
     const handlePointerMove = (e: React.PointerEvent) => {
         if (!dragMode || !containerRef.current) return;
@@ -46,16 +67,13 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
         let newStart = initialDragState.current.start;
         let newEnd = initialDragState.current.end;
         const minDuration = 0.5; // Minimum 0.5s clip
+        let span = newEnd - newStart; // Initial span before move
 
         if (dragMode === 'start') {
             newStart = Math.max(0, Math.min(initialDragState.current.start + deltaSeconds, newEnd - minDuration));
-            // Removed: if (onSeek) onSeek(newStart);
         } else if (dragMode === 'end') {
             newEnd = Math.min(duration, Math.max(initialDragState.current.end + deltaSeconds, newStart + minDuration));
-            // Removed: if (onSeek) onSeek(newEnd);
         } else if (dragMode === 'slip') {
-            // "Slip" edit: move the window without changing duration
-            const span = newEnd - newStart;
             newStart = initialDragState.current.start + deltaSeconds;
 
             // Clamp to bounds
@@ -65,7 +83,18 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
             newEnd = newStart + span;
         }
 
+        // Pass the new range up to the controlled component
         onRangeChange(newStart, newEnd);
+
+        // Update the source preview immediately during drag
+        if (dragMode === 'start') {
+            onSeekSource(newStart);
+        } else if (dragMode === 'end') {
+            onSeekSource(newEnd);
+        } else if (dragMode === 'slip') {
+            // When slipping, seek to the middle of the new range for context
+            onSeekSource(newStart + span / 2);
+        }
     };
 
     const handlePointerUp = (e: React.PointerEvent) => {
@@ -77,6 +106,7 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
 
     const leftPercent = toPercent(startOffset);
     const rightPercent = toPercent(endOffset);
+    const playheadPercent = toPercent(currentTimeSource);
 
     return (
         <div
@@ -85,11 +115,12 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
+            onClick={handleBackgroundClick} // Handle clicks for seeking
         >
             {/* 1. Filmstrip Background */}
             <div className="absolute inset-0 flex opacity-50 pointer-events-none grayscale group-hover:grayscale-0 transition-all">
                 {filmstrip.length > 0 ? filmstrip.map((frame, i) => (
-                    <div key={i} className="flex-1 h-full relative overflow-hidden border-r border-white/5 last:border-0">
+                    <div key={i} className="flex-1 h-full relative overflow-hidden border-r border-black/20 last:border-0">
                         <img src={`http://localhost:3001${frame}`} className="w-full h-full object-cover" draggable={false} />
                     </div>
                 )) : (
@@ -137,6 +168,17 @@ export const VideoTimelineSlider: React.FC<VideoTimelineSliderProps> = ({
                 <div className="absolute top-0 w-3 h-4 bg-yellow-500 rounded-b-sm" />
                 <div className="absolute bottom-0 w-3 h-4 bg-yellow-500 rounded-t-sm" />
             </div>
+
+            {/* 6. Source Playhead (Red Line - Only visible if inside selection) */}
+            {currentTimeSource >= startOffset && currentTimeSource <= endOffset && (
+                <div
+                    className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none shadow-[0_0_4px_rgba(239,68,68,0.8)]"
+                    style={{ left: `${playheadPercent}%` }}
+                >
+                    {/* Playhead Knob */}
+                    <div className="absolute top-0 w-3 h-3 bg-red-500 -ml-1.5 rounded-b-sm shadow-md" />
+                </div>
+            )}
         </div>
     );
 };

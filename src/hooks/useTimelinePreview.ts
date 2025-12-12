@@ -25,10 +25,13 @@ export interface PreviewState {
     activeNodeType: string | null;
 }
 
+
 export const useTimelinePreview = (
     tracks: TimelineTrack[],
     assets: ProjectAsset[],
-    activeItemId: string | null
+    activeItemId: string | null,
+    // NEW PROP: Temporary override for live preview
+    trimOverride: { id: string, startOffset: number, endOffset: number } | null = null
 ): PreviewState => {
     return useMemo(() => {
         // Flatten video tracks
@@ -64,19 +67,44 @@ export const useTimelinePreview = (
 
             const isImage = item.resourceId.match(/\.(jpg|jpeg|png|webp|gif)$/i);
 
+            let finalStartOffset = item.startOffset;
+            let finalTimelineDuration = item.duration;
+            let finalTimelineStart = item.start;
+
+            // Source end time calculated from committed data
+            let finalEndOffset = item.startOffset + item.duration * (item.playbackRate || 1);
+
+            // === APPLY TRIM OVERRIDE ===
+            if (trimOverride && item.id === activeItemId && item.id === trimOverride.id) {
+                const playbackRate = item.playbackRate ?? 1;
+
+                // 1. Update source offsets based on override
+                finalStartOffset = trimOverride.startOffset;
+                finalEndOffset = trimOverride.endOffset;
+
+                const sourceSpan = finalEndOffset - finalStartOffset;
+
+                // 2. Calculate the resulting timeline duration and start position based on new source span/offset
+                finalTimelineDuration = sourceSpan / playbackRate;
+
+                const offsetShift = trimOverride.startOffset - item.startOffset;
+                finalTimelineStart = item.start + (offsetShift / playbackRate);
+            }
+            // ==========================
+
             // If track is muted, volume is 0. Otherwise use item volume or default 1.
             const finalVolume = item.isTrackMuted ? 0 : (item.volume ?? 1);
 
             return {
                 id: item.id,
                 url: `http://localhost:3001${asset.url}`, // Ensure URL is absolute
-                start: item.startOffset,
-                end: item.startOffset + item.duration * (item.playbackRate || 1), // Source end time
+                start: finalStartOffset,
+                end: finalEndOffset, // Source end time
                 volume: finalVolume,
                 playbackRate: item.playbackRate ?? 1,
                 label: asset.name,
-                timelineStart: item.start,
-                timelineDuration: item.duration,
+                timelineStart: finalTimelineStart,
+                timelineDuration: finalTimelineDuration,
                 sourceDuration: asset.duration,
                 filmstrip: asset.filmstrip,
                 mediaType: isImage ? 'image' : 'video'
@@ -86,7 +114,7 @@ export const useTimelinePreview = (
         const clips = sortedVideoItems.map(mapItemToPreviewClip);
         const audioClips = sortedAudioItems.map(mapItemToPreviewClip);
 
-        // Calculate total duration
+        // Calculate total duration (based on potentially overridden clips)
         const maxVideoEnd = clips.reduce((max, clip) => Math.max(max, clip.timelineStart + clip.timelineDuration), 0);
         const maxAudioEnd = audioClips.reduce((max, clip) => Math.max(max, clip.timelineStart + clip.timelineDuration), 0);
 
@@ -98,5 +126,5 @@ export const useTimelinePreview = (
             activeNodeId: activeItemId,
             activeNodeType: activeItemId ? 'clip' : null // Simplifying assumption
         };
-    }, [tracks, assets, activeItemId]);
+    }, [tracks, assets, activeItemId, trimOverride]);
 };

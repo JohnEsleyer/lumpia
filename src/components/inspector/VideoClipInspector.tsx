@@ -1,6 +1,6 @@
 // src/components/inspector/VideoClipInspector.tsx
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { Video, Settings2, Volume2, Gauge, Scissors } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { Video, Settings2, Volume2, Gauge, Scissors, Loader2, Play, Pause } from 'lucide-react';
 import { VideoTrimmer } from './VideoTrimmer';
 import { Button } from '../ui/Button';
 
@@ -10,6 +10,13 @@ interface LibraryAsset {
     filmstrip: string[];
     thumbnailUrl: string;
     duration?: number;
+}
+
+// Snapshot of the committed/saved state of the clip for reference
+interface CommittedClipData {
+    start: number; // Committed Timeline Start (T_committed_start)
+    startOffset: number; // Committed Source Start (S_committed)
+    playbackRate: number;
 }
 
 interface VideoClipInspectorProps {
@@ -22,78 +29,309 @@ interface VideoClipInspectorProps {
         volume: number;
     };
     assetData: LibraryAsset;
+    committedItemData: CommittedClipData; // <-- NEW PROP
 
     // Actions
     onUpdateItemProperties: (id: string, data: { volume?: number; playbackRate?: number | null }) => void;
     // Commits trim: updates timeline start, timeline duration, and source offset
     onUpdateTimelinePosition: (id: string, newStart: number, newDuration: number, newStartOffset: number) => void;
     onSeek: (time: number) => void;
+
+    // NEW Props for live preview
+    onUpdateTrimOverride: (startOffset: number, endOffset: number) => void;
+    onClearTrimOverride: () => void;
+
+    // NEW PROP for synchronization
+    globalTimelineTime: number;
 }
+
 
 export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     itemId,
     itemData,
     assetData,
+    committedItemData,
     onUpdateItemProperties,
     onUpdateTimelinePosition,
-    onSeek
+    onSeek,
+    onUpdateTrimOverride,
+    onClearTrimOverride,
+    globalTimelineTime
 }) => {
     const sourceDuration = assetData.duration || 60;
+    const inspectorVideoRef = useRef<HTMLVideoElement>(null);
+    const [previewIsLoading, setPreviewIsLoading] = useState(true);
+    
+    // CORRECTED Ref type for stability check
+    const lastCommittedRef = useRef<{ id: string, start: number, offset: number, duration: number, rate: number, url: string } | null>(null);
 
-    // State for Trimmer UI (Ghost state before commit)
-    const [isTrimming, setIsTrimming] = useState(false);
+    // NEW STATE for controlling playback inside the inspector
+    const [isPlayingSource, setIsPlayingSource] = useState(false);
 
-    // Calculate the current source end offset based on timeline duration and playback rate.
-    const currentSourceEnd = useMemo(() => {
+    // Calculate the current committed source end offset.
+    const currentCommittedSourceEnd = useMemo(() => {
         // Source End = Source Start + (Timeline Duration * Playback Rate)
-        // Ensure we don't exceed the actual source duration
         return Math.min(
             sourceDuration,
             itemData.startOffset + (itemData.duration * itemData.playbackRate)
         );
     }, [itemData.startOffset, itemData.duration, itemData.playbackRate, sourceDuration]);
 
-    // Trimmer Props based on current clip state
-    const trimmerProps = useMemo(() => ({
-        sourceDuration: sourceDuration,
-        initialStart: itemData.startOffset,
-        initialEnd: currentSourceEnd,
-        filmstrip: assetData.filmstrip,
-    }), [sourceDuration, itemData.startOffset, currentSourceEnd, assetData.filmstrip]);
+    // UI State: Controls Trimmer visibility
+    const [isTrimming, setIsTrimming] = useState(false);
 
-    // Reset trimming mode if a new item is selected
+    // GHOST STATE: Holds the temporary, uncommitted source offsets while trimming
+    const [tempStartOffset, setTempStartOffset] = useState(itemData.startOffset);
+    const [tempEndOffset, setTempEndOffset] = useState(currentCommittedSourceEnd);
+
+    // --- EFFECT 1: Reset on External Change ---
     useEffect(() => {
+        const currentCommitted = {
+            id: itemId,
+            start: itemData.start,
+            offset: itemData.startOffset,
+            duration: itemData.duration,
+            rate: itemData.playbackRate,
+            url: assetData.url // Include URL for external asset change detection
+        };
+
+        const lastCommitted = lastCommittedRef.current;
+        
+        let shouldReset = false;
+
+        // Condition 1: New clip selected (ID change)
+        if (!lastCommitted || lastCommitted.id !== currentCommitted.id) {
+            shouldReset = true;
+            // console.log('[VCI Debug] RESET TRIGGERED: New Item Selected.');
+        } 
+        // Condition 2: Committed properties changed externally (e.g., timeline trim/move committed)
+        else if (
+            lastCommitted.start !== currentCommitted.start ||
+            lastCommitted.offset !== currentCommitted.offset ||
+            lastCommitted.duration !== currentCommitted.duration ||
+            lastCommitted.rate !== currentCommitted.rate ||
+            lastCommitted.url !== currentCommitted.url
+        ) {
+            shouldReset = true;
+            // console.log('[VCI Debug] RESET TRIGGERED: Committed Properties Changed Externally.');
+        } 
+
+        if (shouldReset) {
+            const committedEnd = Math.min(
+                sourceDuration,
+                itemData.startOffset + (itemData.duration * itemData.playbackRate)
+            );
+            
+            setTempStartOffset(itemData.startOffset);
+            setTempEndOffset(committedEnd);
+            
+            // CRITICAL: Force set trimming to false and stop playback
+            setIsTrimming(false); 
+            setIsPlayingSource(false); // Stop local playback
+            onClearTrimOverride();
+            setPreviewIsLoading(true);
+            
+            lastCommittedRef.current = currentCommitted; // Update reference only after reset
+        }
+
+    }, [
+        itemId, 
+        itemData.start, 
+        itemData.startOffset, 
+        itemData.duration, 
+        itemData.playbackRate, 
+        assetData.url, 
+        onClearTrimOverride, 
+        sourceDuration
+    ]);
+    
+    // --- EFFECT 2: Source Playback Synchronization ---
+    const sourceTime = useMemo(() => {
+        const timelineStart = itemData.start;
+        const playbackRate = itemData.playbackRate;
+
+        const activeStart = isTrimming ? tempStartOffset : itemData.startOffset;
+        const activeEnd = isTrimming ? tempEndOffset : currentCommittedSourceEnd;
+
+        // Note: When isPlayingSource is TRUE, we rely on the video element's internal clock, 
+        // not the global timeline clock, unless the clip is actively being dragged/trimmed.
+
+        // If not playing locally, calculate time based on global timeline (for scrubbing sync)
+        if (!isPlayingSource) {
+            const timeInClip = globalTimelineTime - timelineStart;
+            const sourceDelta = timeInClip * playbackRate;
+            const calculatedSourceTime = activeStart + sourceDelta;
+            
+            // Clamp to the current active source trim range
+            return Math.max(
+                activeStart,
+                Math.min(calculatedSourceTime, activeEnd)
+            );
+        }
+
+        // If playing locally, return the current video element time (fallback logic below handles the element sync)
+        return inspectorVideoRef.current?.currentTime ?? activeStart;
+
+    }, [globalTimelineTime, itemData.start, itemData.playbackRate, itemData.startOffset, currentCommittedSourceEnd, isTrimming, tempStartOffset, tempEndOffset, isPlayingSource]);
+
+
+    // Sync the local video element's time and playback state
+    useEffect(() => {
+        const video = inspectorVideoRef.current;
+        if (!video) return;
+
+        const clipEnd = itemData.start + itemData.duration;
+        const activeEndOffset = isTrimming ? tempEndOffset : currentCommittedSourceEnd;
+        const activeStartOffset = isTrimming ? tempStartOffset : itemData.startOffset;
+
+        // 1. Playback Control
+        if (isPlayingSource) {
+            // Ensure video element is playing
+            if (video.paused) video.play().catch(console.warn);
+        } else {
+            // Ensure video element is paused
+            if (!video.paused) video.pause();
+        }
+
+        // 2. Time Synchronization (Only seek if not playing locally, or if playing but outside bounds)
+        if (!isPlayingSource) {
+            if (!isNaN(sourceTime) && sourceTime >= 0) {
+                 // Sync video element frame only if playhead is over the clip
+                if (globalTimelineTime >= itemData.start && globalTimelineTime < clipEnd) {
+                    // Seek only if time delta is significant
+                    if (Math.abs(video.currentTime - sourceTime) > 0.05) {
+                        video.currentTime = sourceTime;
+                    }
+                } else {
+                    // Hold frame at the committed start
+                    video.currentTime = itemData.startOffset;
+                }
+            }
+        }
+        
+        // 3. Playback Boundary/Looping Listener (for local playback)
+        const checkBoundary = () => {
+            if (video.currentTime >= activeEndOffset) {
+                video.pause();
+                video.currentTime = activeStartOffset;
+                setIsPlayingSource(false);
+            }
+        };
+
+        video.addEventListener('timeupdate', checkBoundary);
+        return () => {
+            video.removeEventListener('timeupdate', checkBoundary);
+        };
+
+    }, [
+        isPlayingSource, 
+        isTrimming, 
+        globalTimelineTime, 
+        sourceTime, 
+        itemData.start, 
+        itemData.duration, 
+        itemData.startOffset, 
+        currentCommittedSourceEnd, 
+        tempEndOffset, 
+        tempStartOffset
+    ]);
+
+
+    // --- Core Trimming Handlers ---
+
+    // 1. Cancel Handler (resets state)
+    const handleTrimmerCancel = useCallback(() => {
+        setIsPlayingSource(false); // Stop playback on cancel
+        onClearTrimOverride();
+        setTempStartOffset(itemData.startOffset);
+        setTempEndOffset(currentCommittedSourceEnd);
         setIsTrimming(false);
-    }, [itemId]);
+    }, [itemData.startOffset, currentCommittedSourceEnd, onClearTrimOverride]);
 
-    // --- Handlers ---
+    // 2. Toggle Handler (enters/exits mode)
+    const handleToggleTrimMode = useCallback(() => {
+        if (isTrimming) {
+            handleTrimmerCancel();
+        } else {
+            setIsTrimming(true);
+            setIsPlayingSource(false); // Ensure playback is stopped when entering trim mode
+            // Initialize temp state to committed state
+            setTempStartOffset(itemData.startOffset);
+            setTempEndOffset(currentCommittedSourceEnd);
+            // Set override immediately so main preview syncs with committed clip state
+            onUpdateTrimOverride(itemData.startOffset, currentCommittedSourceEnd);
+            // Seek to the start of the clip when entering trim mode
+            onSeek(itemData.start);
+        }
+    }, [isTrimming, handleTrimmerCancel, itemData.startOffset, currentCommittedSourceEnd, onUpdateTrimOverride, onSeek, itemData.start]);
+    
+    // 3. Play/Pause Source Control
+    const toggleSourcePlayback = useCallback(() => {
+        const video = inspectorVideoRef.current;
+        if (!video) return;
 
-    // Handles temporary change during trim drag (for preview/seek)
+        if (isPlayingSource) {
+            setIsPlayingSource(false);
+        } else {
+            const activeStartOffset = isTrimming ? tempStartOffset : itemData.startOffset;
+            const activeEndOffset = isTrimming ? tempEndOffset : currentCommittedSourceEnd;
+
+            // If video is near the end, reset it to the beginning of the selection before playing
+            if (video.currentTime >= activeEndOffset || video.currentTime < activeStartOffset) {
+                video.currentTime = activeStartOffset;
+            }
+            
+            setIsPlayingSource(true);
+        }
+    }, [isPlayingSource, isTrimming, tempStartOffset, tempEndOffset, itemData.startOffset, currentCommittedSourceEnd]);
+
+
+    // 4. Preview Change (updates GHOST state during drag/nudge)
     const handleTrimmerPreviewChange = useCallback((newStartOffset: number, newEndOffset: number) => {
-        // Calculate the time on the timeline corresponding to the new source start offset.
-        // Timeline Time = (New Start Offset - Original Start Offset) / Playback Rate + Original Timeline Start
-        const shiftInSource = newStartOffset - itemData.startOffset;
-        const shiftInTimeline = shiftInSource / itemData.playbackRate;
-        const newTimelineTime = itemData.start + shiftInTimeline;
+        // Stop playback while actively dragging handles
+        setIsPlayingSource(false);
 
-        // Use the middle of the new span for a better preview location
-        const newSourceCenter = (newStartOffset + newEndOffset) / 2;
-        const centerShift = newSourceCenter - (itemData.startOffset + (itemData.duration * itemData.playbackRate) / 2);
-        const centerTimelineTime = itemData.start + (itemData.duration / 2) + (centerShift / itemData.playbackRate);
+        // 1. Update local ghost state
+        setTempStartOffset(newStartOffset);
+        setTempEndOffset(newEndOffset);
 
-        onSeek(centerTimelineTime);
-    }, [itemData.start, itemData.startOffset, itemData.playbackRate, itemData.duration, onSeek]);
+        // 2. Update the parent state for PreviewState hook consumption
+        onUpdateTrimOverride(newStartOffset, newEndOffset);
+
+        // 3. Recalculate and seek the main timeline to the new effective clip start time
+        const sourceShift = newStartOffset - committedItemData.startOffset;
+        const playbackRate = committedItemData.playbackRate;
+        const timelineShift = sourceShift / playbackRate;
+        const newTimelineTime = committedItemData.start + timelineShift;
+
+        onSeek(newTimelineTime);
+    }, [committedItemData.start, committedItemData.startOffset, committedItemData.playbackRate, onSeek, onUpdateTrimOverride]);
 
 
-    // Handles committed change from trimmer
+    // 5. Seek Source (Handles scrubbing the source slider directly)
+    const handleSeekSource = useCallback((sourceTime: number) => {
+        // Stop playback when seeking manually
+        setIsPlayingSource(false);
+        
+        const activeStart = isTrimming ? tempStartOffset : itemData.startOffset;
+        const sourceDelta = sourceTime - activeStart;
+        const timeInClip = sourceDelta / (itemData.playbackRate || 1);
+        const newTimelineTime = itemData.start + timeInClip;
+
+        onSeek(newTimelineTime);
+    }, [isTrimming, tempStartOffset, itemData.startOffset, itemData.playbackRate, itemData.start, onSeek]);
+
+
+    // 6. Commit Handler (writes GHOST state to timeline)
     const handleTrimmerCommit = useCallback((newStartOffset: number, newEndOffset: number) => {
+        setIsPlayingSource(false); // Stop playback on commit
+        
         const newSourceSpan = newEndOffset - newStartOffset;
         const newTimelineDuration = newSourceSpan / itemData.playbackRate;
 
-        // When committing a trim, we need to shift the start time of the clip on the timeline
-        // based on how much the start offset changed.
-        const shift = newStartOffset - itemData.startOffset;
-        const newTimelineStart = itemData.start + shift;
+        // Calculate new timeline start using the committed baseline
+        const shift = newStartOffset - committedItemData.startOffset;
+        const newTimelineStart = committedItemData.start + (shift / committedItemData.playbackRate);
 
         onUpdateTimelinePosition(
             itemId,
@@ -102,8 +340,10 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
             newStartOffset
         );
 
+        // Clear GHOST state and exit trim mode
+        onClearTrimOverride();
         setIsTrimming(false);
-    }, [itemId, itemData.start, itemData.startOffset, itemData.playbackRate, onUpdateTimelinePosition]);
+    }, [itemId, committedItemData.start, committedItemData.startOffset, committedItemData.playbackRate, itemData.playbackRate, onUpdateTimelinePosition, onClearTrimOverride]);
 
 
     // --- General Property Handlers ---
@@ -114,7 +354,6 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         onUpdateItemProperties(itemId, { playbackRate: parseFloat(e.target.value) });
     };
-
     // Format time helper
     const formatTime = (s: number) => {
         const m = Math.floor(s / 60);
@@ -135,6 +374,65 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
 
+                {/* --- DEDICATED PREVIEW SECTION --- */}
+                <div>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 mb-4">
+                        <Video size={12} /> Source Preview
+                    </label>
+                    <div className="aspect-video w-full bg-black rounded-lg border border-white/10 overflow-hidden relative flex items-center justify-center">
+
+                        {/* 1. Video Element (Source URL) */}
+                        <video
+                            ref={inspectorVideoRef}
+                            src={`http://localhost:3001${assetData.url}`}
+                            className={`w-full h-full object-contain ${previewIsLoading ? 'opacity-0' : 'opacity-100'}`}
+                            controls={false}
+                            autoPlay={false}
+                            muted
+                            onLoadedMetadata={() => setPreviewIsLoading(false)}
+                            crossOrigin="anonymous"
+                        />
+
+                        {/* 2. Loading State */}
+                        {previewIsLoading && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                                <Loader2 className="animate-spin text-yellow-500" size={24} />
+                            </div>
+                        )}
+                        
+                        {/* 3. Play/Pause Overlay Button */}
+                        <button
+                            onClick={toggleSourcePlayback}
+                            className={`
+                                absolute inset-0 flex items-center justify-center z-10 
+                                transition-opacity duration-300
+                                ${isPlayingSource ? 'opacity-0' : 'opacity-100'}
+                                hover:bg-black/20
+                            `}
+                            title={isPlayingSource ? "Pause Source Preview" : "Play Source Preview"}
+                        >
+                            {isPlayingSource ? (
+                                <Pause size={36} fill="white" className="text-white opacity-80" />
+                            ) : (
+                                <Play size={36} fill="white" className="text-white opacity-80 ml-1" />
+                            )}
+                        </button>
+
+
+                        {/* 4. Source Time overlay */}
+                        <div className="absolute top-2 right-2 bg-black/70 backdrop-blur-sm px-2 py-1 rounded text-[10px] font-mono text-yellow-400 border border-white/10">
+                            SRC: {formatTime(inspectorVideoRef.current?.currentTime ?? itemData.startOffset)}
+                        </div>
+
+                        {/* 5. Clip Info Overlay */}
+                        <div className="absolute bottom-2 left-2 flex flex-col gap-0.5">
+                            <div className="text-[10px] font-mono text-slate-500 bg-black/70 px-1.5 rounded">
+                                Clip: {formatTime(isTrimming ? (tempEndOffset - tempStartOffset) / itemData.playbackRate : itemData.duration)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {/* File Info */}
                 <div className="bg-slate-900/50 border border-white/5 rounded-xl p-4 flex items-center gap-4">
                     <div className="flex-1 min-w-0">
@@ -152,7 +450,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
                             <Scissors size={12} /> Trim & Source Selection
                         </label>
                         <Button
-                            onClick={() => setIsTrimming(!isTrimming)}
+                            onClick={handleToggleTrimMode}
                             variant={isTrimming ? 'danger' : 'secondary'}
                             className="h-7 text-[10px] px-3"
                         >
@@ -162,16 +460,23 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
 
                     {isTrimming ? (
                         <VideoTrimmer
-                            {...trimmerProps}
+                            sourceDuration={sourceDuration}
+                            // Pass GHOST state as controlled props
+                            startOffset={tempStartOffset}
+                            endOffset={tempEndOffset}
+                            filmstrip={assetData.filmstrip}
                             onPreviewChange={handleTrimmerPreviewChange}
                             onCommit={handleTrimmerCommit}
-                            onCancel={() => setIsTrimming(false)}
+                            onCancel={handleTrimmerCancel}
+                            // NEW PROPS PASSED DOWN
+                            currentTimeSource={inspectorVideoRef.current?.currentTime ?? tempStartOffset}
+                            onSeekSource={handleSeekSource}
                         />
                     ) : (
                         <div className="space-y-2">
                             <div className="text-xs font-mono text-slate-400 p-3 bg-zinc-900 rounded-lg border border-white/5">
                                 <p>Source IN: <span className="text-yellow-400">{formatTime(itemData.startOffset)}</span></p>
-                                <p>Source OUT: <span className="text-yellow-400">{formatTime(currentSourceEnd)}</span></p>
+                                <p>Source OUT: <span className="text-yellow-400">{formatTime(currentCommittedSourceEnd)}</span></p>
                             </div>
                         </div>
                     )}
