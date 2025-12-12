@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { type TimelineItem as TimelineItemType } from '../../types';
 import { GripVertical } from 'lucide-react';
 
@@ -13,6 +13,7 @@ interface TimelineItemProps {
     name: string;
     variant: 'video' | 'audio' | 'overlay';
     assetUrl?: string;
+    filmstrip?: string[];
     activeTool: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
 }
@@ -44,6 +45,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     name,
     variant,
     assetUrl,
+    filmstrip,
     activeTool,
     onSplit
 }) => {
@@ -57,96 +59,118 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     const width = item.duration * pixelsPerSecond;
     const left = item.start * pixelsPerSecond;
 
-    useEffect(() => {
-        if (variant === 'audio' && assetUrl) {
-            let isActive = true;
+    // P2.5: Determine frames to display for filmstrip (Max 5 for visibility)
+    const framesToDisplay = useMemo(() => {
+        if (!filmstrip || filmstrip.length === 0 || variant !== 'video') return [];
 
-            const fetchAudio = async () => {
-                try {
-                    const response = await fetch(assetUrl);
-                    if (!response.ok) throw new Error(`Failed to fetch audio: ${response.statusText}`);
+        const count = 5;
+        if (filmstrip.length <= count) return filmstrip;
 
-                    const arrayBuffer = await response.arrayBuffer();
-                    if (!isActive) return;
-
-                    // Use OfflineAudioContext for data decoding - no user gesture required
-                    const offlineContext = new OfflineAudioContext(1, 1, 44100);
-                    const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
-
-                    const rawData = audioBuffer.getChannelData(0); // Left channel
-                    const samples = 100; // Number of bars to draw
-                    const blockSize = Math.floor(rawData.length / samples);
-                    const filteredData = [];
-
-                    for (let i = 0; i < samples; i++) {
-                        let sum = 0;
-                        for (let j = 0; j < blockSize; j++) {
-                            // Use Root Mean Square for better representation of "energy"
-                            const val = rawData[blockSize * i + j];
-                            sum += val * val;
-                        }
-                        const rms = Math.sqrt(sum / blockSize);
-                        filteredData.push(rms);
-                    }
-
-                    // Normalize
-                    const max = Math.max(...filteredData);
-                    const normalizedData = max > 0 ? filteredData.map(n => n / max) : filteredData;
-
-                    if (isActive) {
-                        setWaveform(normalizedData);
-                    }
-                } catch (e) {
-                    console.error("Failed to load waveform for", assetUrl, e);
-                }
-            };
-
-            fetchAudio();
-
-            return () => {
-                isActive = false;
-            };
+        // Calculate indices to distribute the frames across the clip duration
+        const selectedFrames = [];
+        const step = (filmstrip.length - 1) / (count - 1);
+        for (let i = 0; i < count; i++) {
+            const index = Math.round(i * step);
+            selectedFrames.push(filmstrip[Math.min(index, filmstrip.length - 1)]);
         }
+        return selectedFrames;
+    }, [filmstrip, variant]);
+
+
+    // --- Waveform Generation Logic (Kept for continuity, relies on assetUrl) ---
+    useEffect(() => {
+        if (variant !== 'audio' || !assetUrl) {
+            setWaveform(null);
+            return;
+        }
+
+        let isActive = true;
+
+        const fetchAudio = async () => {
+            try {
+                // Fetch using absolute path
+                const absoluteUrl = assetUrl;
+
+                const response = await fetch(absoluteUrl);
+                if (!response.ok) throw new Error(`Failed to fetch audio: ${response.statusText}`);
+
+                const arrayBuffer = await response.arrayBuffer();
+                if (!isActive) return;
+
+                // Use OfflineAudioContext for data decoding - no user gesture required
+                const offlineContext = new OfflineAudioContext(1, 1, 44100);
+                const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
+
+                const rawData = audioBuffer.getChannelData(0); // Left channel
+                const samples = 100; // Number of bars to draw
+                const blockSize = Math.floor(rawData.length / samples);
+                const filteredData = [];
+
+                for (let i = 0; i < samples; i++) {
+                    let sum = 0;
+                    for (let j = 0; j < blockSize; j++) {
+                        // Use Root Mean Square for better representation of "energy"
+                        const val = rawData[blockSize * i + j];
+                        sum += val * val;
+                    }
+                    const rms = Math.sqrt(sum / blockSize);
+                    filteredData.push(rms);
+                }
+
+                // Normalize
+                const max = Math.max(...filteredData);
+                const normalizedData = max > 0 ? filteredData.map(n => n / max) : filteredData;
+
+                if (isActive) {
+                    setWaveform(normalizedData);
+                }
+            } catch (e) {
+                console.error("Failed to load waveform for", assetUrl, e);
+            }
+        };
+
+        fetchAudio();
+
+        return () => {
+            isActive = false;
+        };
     }, [assetUrl, variant]);
 
     // Draw waveform
     useEffect(() => {
-        if (waveform && canvasRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                const w = canvas.width;
-                const h = canvas.height;
-                ctx.clearRect(0, 0, w, h);
+        if (variant !== 'audio' || !waveform || !canvasRef.current) return;
 
-                // Make waveform higher contrast
-                ctx.fillStyle = selected ? '#ffffff' : '#a7f3d0'; // White when selected, Emerald-200 otherwise
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
 
-                const barWidth = w / waveform.length;
-                const gap = 1;
+            // Make waveform higher contrast
+            ctx.fillStyle = selected ? '#ffffff' : '#a7f3d0'; // White when selected, Emerald-200 otherwise
 
-                waveform.forEach((val, index) => {
-                    // Min height for visibility
-                    const barHeight = Math.max(2, val * h * 0.8);
-                    const x = index * barWidth;
-                    // Center the waveform vertically
-                    const y = (h - barHeight) / 2;
-                    ctx.fillRect(x, y, barWidth - gap, barHeight);
-                });
-            }
+            const barWidth = w / waveform.length;
+            const gap = 1;
+
+            waveform.forEach((val, index) => {
+                // Min height for visibility
+                const barHeight = Math.max(2, val * h * 0.8);
+                const x = index * barWidth;
+                // Center the waveform vertically
+                const y = (h - barHeight) / 2;
+                ctx.fillRect(x, y, barWidth - gap, barHeight);
+            });
         }
-    }, [waveform, width, height, selected]);
+    }, [waveform, width, height, selected, variant]);
+    // --- End Waveform Logic ---
+
 
     const handleMouseDown = (e: React.MouseEvent) => {
         e.stopPropagation();
 
         if (activeTool === 'split' && onSplit) {
             // Calculate split time
-            // e.clientX is relative to viewport.
-            // item.left is relative to track.
-            // We need text local to item or consistent coordinate system.
-            // Item is absolute position left=item.start*pps.
-            // Click on item.
             const rect = e.currentTarget.getBoundingClientRect();
             const clickXInsideItem = e.clientX - rect.left;
             const clickTimeOffset = clickXInsideItem / pixelsPerSecond;
@@ -198,11 +222,29 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
             }}
             onMouseDown={handleMouseDown}
         >
+            {/* P2.5: Filmstrip Background for Video */}
+            {variant === 'video' && framesToDisplay.length > 0 && (
+                <div className="absolute inset-0 flex pointer-events-none opacity-80">
+                    {framesToDisplay.map((framePath, i) => (
+                        <div key={i} className="flex-1 h-full relative overflow-hidden">
+                            <img
+                                src={`http://localhost:3001${framePath}`}
+                                className="w-full h-full object-cover border-r border-black/20 last:border-none"
+                                draggable={false}
+                                alt={`Frame ${i}`}
+                            />
+                        </div>
+                    ))}
+                </div>
+            )}
+
+
             {/* Waveform Background for Audio */}
             {variant === 'audio' && (
                 <canvas
                     ref={canvasRef}
                     className="absolute inset-0 w-full h-full pointer-events-none opacity-80"
+                    // Set width dynamically for waveform redrawing stability
                     width={Math.ceil(width)}
                     height={Math.ceil(height)}
                 />

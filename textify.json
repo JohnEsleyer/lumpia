@@ -4,17 +4,11 @@
     ".tsx",
     ".js",
     ".jsx",
-    ".txt",
-    ".md"
+    ".md",
+    ".txt"
   ],
-  "exclude_extensions": [
-    ".exe",
-    ".dll",
-    ".so",
-    ".test",
-    ".jpg",
-    ".png",
-    ".gif",
-    ".sum"
+  "exclude_paths": [],
+  "include_folders": [
+    "src"
   ]
 }

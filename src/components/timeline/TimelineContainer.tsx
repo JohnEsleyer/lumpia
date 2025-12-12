@@ -3,6 +3,14 @@ import { TimelineTrack } from './TimelineTrack';
 import { TimelineRuler } from './TimelineRuler';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
 
+interface LibraryAsset {
+    name: string;
+    url: string;
+    filmstrip: string[];
+    thumbnailUrl: string;
+    duration?: number;
+}
+
 interface TimelineContainerProps {
     tracks: TimelineTrackType[];
     items: TimelineItemType[];
@@ -13,7 +21,13 @@ interface TimelineContainerProps {
     onItemTrim: (trackId: string, itemId: string, newStartTime: number, newDuration: number, trimStart: boolean) => void;
     selectedItemId: string | null;
     onItemClick: (itemId: string) => void;
-    getAssetUrl: (resourceId: string) => string;
+
+    // P2.1: Replaced getAssetUrl with getAssetData
+    getAssetData: (resourceId: string) => LibraryAsset | undefined;
+
+    // P1.2: New prop for handling asset drops
+    onAssetDrop: (trackId: string, payload: LibraryAsset) => void;
+
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
@@ -29,7 +43,8 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     onItemTrim,
     selectedItemId,
     onItemClick,
-    getAssetUrl,
+    getAssetData, // P2.1
+    onAssetDrop, // P1.2
     activeTool = 'cursor',
     onSplit,
     onToggleMute
@@ -84,7 +99,13 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
                             selectedItemId={selectedItemId}
                             onItemClick={onItemClick}
                             getAssetName={(id) => id}
-                            getAssetUrl={getAssetUrl}
+
+                            // P2.1: Pass the new asset data getter
+                            getAssetData={getAssetData}
+
+                            // P1.2: Pass the new drop handler
+                            onAssetDrop={onAssetDrop}
+
                             activeTool={activeTool}
                             onSplit={onSplit}
                             onToggleMute={onToggleMute}

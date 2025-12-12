@@ -3,6 +3,14 @@ import { TimelineItem } from './TimelineItem';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
 import { Video, Mic, Layers, Volume2 } from 'lucide-react';
 
+interface LibraryAsset {
+    name: string;
+    url: string;
+    filmstrip: string[];
+    thumbnailUrl: string;
+    duration?: number;
+}
+
 interface TimelineTrackProps {
     track: TimelineTrackType;
     items: TimelineItemType[];
@@ -12,7 +20,13 @@ interface TimelineTrackProps {
     selectedItemId: string | null;
     onItemClick: (itemId: string) => void;
     getAssetName: (resourceId: string) => string;
-    getAssetUrl: (resourceId: string) => string;
+
+    // P2.1: Replaced getAssetUrl with getAssetData
+    getAssetData: (resourceId: string) => LibraryAsset | undefined;
+
+    // P1.1: New prop for asset drop handling
+    onAssetDrop: (trackId: string, payload: LibraryAsset) => void;
+
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
@@ -27,7 +41,8 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
     selectedItemId,
     onItemClick,
     getAssetName,
-    getAssetUrl,
+    getAssetData, // P2.1
+    onAssetDrop, // P1.1
     activeTool = 'cursor',
     onSplit,
     onToggleMute
@@ -41,6 +56,29 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
             case 'overlay': return <Layers size={16} />;
         }
     };
+
+    // P1.1: Drop handlers for the entire track area
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        // Set drop effect visually
+        e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        try {
+            const dataString = e.dataTransfer.getData('application/json');
+            const data = JSON.parse(dataString);
+
+            if (data.type.startsWith('asset')) {
+                // The payload contains the full LibraryAsset object
+                onAssetDrop(track.id, data.payload);
+            }
+        } catch (error) {
+            console.error("Invalid drop payload", error);
+        }
+    };
+
 
     return (
         <div className={`flex w-full border-b border-white/5`}>
@@ -62,30 +100,41 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
             </div>
 
             {/* Track Content */}
-            <div className={`flex-1 relative bg-[#0a0a0a]`} style={{ height: trackHeight }}>
+            <div
+                className={`flex-1 relative bg-[#0a0a0a]`}
+                style={{ height: trackHeight }}
+                onDragOver={handleDragOver} // P1.1
+                onDrop={handleDrop} // P1.1
+            >
                 {/* Grid Lines (could be moved to container for efficiency) */}
                 <div className="absolute inset-0 pointer-events-none" style={{
                     backgroundImage: 'linear-gradient(to right, #222 1px, transparent 1px)',
                     backgroundSize: `${pixelsPerSecond}px 100%`
                 }} />
 
-                {items.map(item => (
-                    <TimelineItem
-                        key={item.id}
-                        item={item}
-                        pixelsPerSecond={pixelsPerSecond}
-                        height={48}
-                        onDrag={(_id, newTime) => onItemMove(item.id, track.id, newTime)}
-                        onTrim={(_id, newTime, newDur, trimStart) => onItemTrim(item.id, newTime, newDur, trimStart)}
-                        onClick={() => onItemClick(item.id)}
-                        selected={selectedItemId === item.id}
-                        name={getAssetName(item.resourceId)}
-                        variant={track.type}
-                        assetUrl={getAssetUrl(item.resourceId)}
-                        activeTool={activeTool || 'cursor'}
-                        onSplit={onSplit}
-                    />
-                ))}
+                {items.map(item => {
+                    const assetData = getAssetData(item.resourceId); // P2.3 Get full asset data
+                    const assetUrl = assetData ? `http://localhost:3001${assetData.url}` : ''; // Reconstruct URL if needed
+
+                    return (
+                        <TimelineItem
+                            key={item.id}
+                            item={item}
+                            pixelsPerSecond={pixelsPerSecond}
+                            height={48}
+                            onDrag={(_id, newTime) => onItemMove(item.id, track.id, newTime)}
+                            onTrim={(_id, newTime, newDur, trimStart) => onItemTrim(item.id, newTime, newDur, trimStart)}
+                            onClick={() => onItemClick(item.id)}
+                            selected={selectedItemId === item.id}
+                            name={getAssetName(item.resourceId)}
+                            variant={track.type}
+                            assetUrl={assetUrl}
+                            filmstrip={assetData?.filmstrip} // P2.3 Pass filmstrip data
+                            activeTool={activeTool || 'cursor'}
+                            onSplit={onSplit}
+                        />
+                    );
+                })}
             </div>
         </div>
     );

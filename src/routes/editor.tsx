@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Clapperboard,
   Plus,
@@ -15,7 +15,12 @@ import { Button } from '../components/ui/Button';
 // Layout & New Components
 import { EditorLayout } from '../layout/EditorLayout';
 import { Player } from '../components/player/Player';
-import { UtilityPanel } from '../components/inspector/UtilityPanel';
+import { UtilityPanel } from '../components/inspector/UtilityPanel'; // Generic tool/utility panel
+
+// New/Integrated Inspectors
+import { VideoClipInspector } from '../components/inspector/VideoClipInspector';
+import { AudioInspector } from '../components/inspector/AudioInspector';
+import { ImageInspector } from '../components/inspector/ImageInspector';
 
 // Timeline Components
 import { TimelineContainer } from '../components/timeline/TimelineContainer';
@@ -97,7 +102,7 @@ const LibraryPanel = ({
             {assets.map(asset => {
               const isAudio = isAudioFile(asset.name);
               const isImage = isImageFile(asset.name);
-              const dragType = isAudio ? 'asset-audio' : (isImage ? 'asset-image' : 'asset');
+              const dragType = isAudio ? 'asset-audio' : (isImage ? 'asset-image' : 'asset-video'); // Standardized drag type
 
               return (
                 <div
@@ -245,16 +250,29 @@ function EditorApp() {
     }
   };
 
-  const handleUpdateNode = (id: string, data: any) => {
+  // Handler for generic property updates (volume, speed, image duration)
+  const handleUpdateItemProperties = (id: string, data: any) => {
     const track = timeline.tracks.find(t => t.items.some(i => i.id === id));
     if (track) {
-      // Handle TRIM update vs PROPERTY update
-      if (typeof data.startOffset === 'number' && typeof data.duration === 'number') {
-        timeline.trimClip(track.id, id, data.startOffset, data.duration, false);
-      } else {
-        // Handle Volume/Speed update
-        timeline.updateClip(track.id, id, data);
-      }
+      timeline.updateClip(track.id, id, data);
+    }
+  };
+  
+  // Handler specifically for when the VideoTrimmer commits a trim
+  const handleUpdateClipTimelineAndTrim = (
+    itemId: string, 
+    newStart: number, 
+    newDuration: number, 
+    newStartOffset: number
+  ) => {
+    const track = timeline.tracks.find(t => t.items.some(i => i.id === itemId));
+    if (track) {
+        // This single call updates position, duration, and offset.
+        timeline.updateClip(track.id, itemId, {
+            start: newStart, // Timeline start position
+            duration: newDuration, // Timeline duration
+            startOffset: newStartOffset // Source start offset
+        });
     }
   };
 
@@ -295,15 +313,147 @@ function EditorApp() {
       timeline.splitClip(track.id, itemId, time);
     }
   };
+  
+  // P2.2: Function to retrieve full asset data
+  const getAssetData = useCallback((resourceId: string): LibraryAsset | undefined => {
+    return libraryAssets.find(a => a.name === resourceId);
+  }, [libraryAssets]);
 
-  // derived props for PropertiesPanel
-  const selectedItem = selectedItemId
-    ? timeline.tracks.flatMap(t => t.items).find(i => i.id === selectedItemId)
-    : null;
+  // P1.3: New handler for asset dropping onto tracks
+  const handleAssetDrop = useCallback((trackId: string, payload: LibraryAsset) => {
+    const trackType = timeline.tracks.find(t => t.id === trackId)?.type;
+    
+    let expectedType = 'video';
+    if (isAudioFile(payload.name)) expectedType = 'audio';
+    else if (isImageFile(payload.name)) expectedType = 'overlay';
 
-  // const selectedTrackType = selectedItem
-  //   ? timeline.tracks.find(t => t.items.includes(selectedItem))?.type
-  //   : null;
+    if (trackType !== expectedType) {
+        console.warn(`Cannot drop ${payload.name} (Type: ${expectedType}) onto ${trackType} track.`);
+        return; 
+    }
+
+    timeline.addClip(trackId, payload, timeline.currentTime);
+
+  }, [timeline.tracks, timeline.currentTime, timeline.addClip]);
+
+
+  // Derived state for the inspector
+  const selectedTrackedItem = useMemo(() => {
+    if (!selectedItemId) return null;
+    for (const track of timeline.tracks) {
+        const item = track.items.find(i => i.id === selectedItemId);
+        if (item) {
+            const asset = getAssetData(item.resourceId);
+            return {
+                item,
+                track,
+                asset,
+            };
+        }
+    }
+    return null;
+  }, [selectedItemId, timeline.tracks, getAssetData]);
+
+
+  // Conditional Inspector Rendering
+  const renderInspector = useMemo(() => {
+    if (!selectedTrackedItem) {
+        // Show generic tools if nothing is selected
+        return (
+            <UtilityPanel
+                selectedItemId={null}
+                properties={null}
+                onUpdate={handleUpdateItemProperties}
+                activeTool={activeTool}
+                onToolChange={setActiveTool}
+            />
+        );
+    }
+
+    const { item, track, asset } = selectedTrackedItem;
+    
+    // Fallback if asset is missing (shouldn't happen, but safety)
+    if (!asset) return <UtilityPanel selectedItemId={null} properties={null} onUpdate={handleUpdateItemProperties} activeTool={activeTool} onToolChange={setActiveTool} />;
+
+
+    // Common item data structure for inspectors
+    const itemData = { 
+        start: item.start,
+        duration: item.duration,
+        startOffset: item.startOffset,
+        playbackRate: item.playbackRate ?? 1,
+        volume: item.volume ?? 1,
+        // Used by image/audio inspectors:
+        url: `http://localhost:3001${asset.url}`,
+        sourceDuration: asset.duration,
+        label: asset.name
+    };
+
+    if (track.type === 'video') {
+        return (
+            <VideoClipInspector
+                itemId={item.id}
+                itemData={itemData}
+                assetData={asset}
+                onUpdateItemProperties={handleUpdateItemProperties}
+                onUpdateTimelinePosition={handleUpdateClipTimelineAndTrim}
+                onSeek={handleSeek}
+            />
+        );
+    }
+
+    if (track.type === 'audio') {
+        if (!projectId) return null;
+        
+        // Calculate the audio clip end offset for the AudioInspector display
+        const endOffset = item.startOffset + item.duration * (item.playbackRate || 1);
+
+        return (
+            <AudioInspector
+                projectId={projectId}
+                nodeId={item.id}
+                data={{ 
+                    url: itemData.url, 
+                    duration: itemData.sourceDuration,
+                    startOffset: itemData.startOffset,
+                    endOffset: endOffset,
+                    volume: itemData.volume,
+                    label: itemData.label
+                }}
+                // Note: AudioInspector's onUpdateNode handles its own complex state (offset/duration/volume)
+                // When we unify, we pass the generic handler which uses timeline.updateClip
+                onUpdateNode={handleUpdateItemProperties} 
+            />
+        );
+    }
+
+    if (track.type === 'overlay') {
+        // Assuming this is primarily for images/static overlays
+        return (
+            <ImageInspector
+                nodeId={item.id}
+                data={{ 
+                    url: itemData.url, 
+                    duration: itemData.duration // Image node uses timeline duration as its property
+                }}
+                onUpdateNode={handleUpdateItemProperties}
+            />
+        );
+    }
+
+    // Default to UtilityPanel if type is unhandled or generic properties are needed
+    return (
+        <UtilityPanel
+            selectedItemId={item.id}
+            properties={{ id: item.id, volume: item.volume ?? 1, playbackRate: item.playbackRate ?? 1 }}
+            onUpdate={handleUpdateItemProperties}
+            activeTool={activeTool}
+            onToolChange={setActiveTool}
+        />
+    );
+
+  }, [selectedItemId, timeline.tracks, getAssetData, activeTool, handleUpdateItemProperties, handleUpdateClipTimelineAndTrim, handleSeek, projectId]);
+
 
   if (!projectId) return <div>Invalid Project ID</div>;
 
@@ -338,25 +488,7 @@ function EditorApp() {
           />
         }
         timeline={
-          <div className="h-full flex flex-col"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              try {
-                const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                if (data.type.startsWith('asset')) {
-                  let trackType = 'video';
-                  if (data.type === 'asset-audio') trackType = 'audio';
-                  else if (data.type === 'asset-image') trackType = 'overlay';
-
-                  const track = timeline.tracks.find(t => t.type === trackType);
-                  if (track) {
-                    timeline.addClip(track.id, data.payload, timeline.currentTime);
-                  }
-                }
-              } catch (err) { console.error(err) }
-            }}
-          >
+          <div className="h-full flex flex-col">
             {/* Floating Action Bar */}
             <div className="absolute top-[-3rem] right-4 flex gap-2 z-50">
               <Button onClick={handleSplit} disabled={!selectedItemId} className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700 disabled:opacity-50">
@@ -377,26 +509,15 @@ function EditorApp() {
               items={timeline.tracks.flatMap(t => t.items)}
               selectedItemId={selectedItemId}
               onItemClick={setSelectedItemId}
-              getAssetUrl={(resourceId) => {
-                const asset = libraryAssets.find(a => a.name === resourceId);
-                return asset ? `http://localhost:3001${asset.url}` : '';
-              }}
+              getAssetData={getAssetData} 
+              onAssetDrop={handleAssetDrop}
               activeTool={activeTool}
               onSplit={handleSplitClick}
               onToggleMute={timeline.toggleTrackMute}
             />
           </div>
         }
-        properties={
-          <UtilityPanel
-            selectedItemId={selectedItemId}
-            // selectedItemType={selectedTrackType === 'audio' ? 'audio' : selectedItem ? 'clip' : null}
-            properties={selectedItem ? { id: selectedItem.id, volume: selectedItem.volume ?? 1, playbackRate: selectedItem.playbackRate ?? 1 } : null}
-            onUpdate={handleUpdateNode}
-            activeTool={activeTool}
-            onToolChange={setActiveTool}
-          />
-        }
+        properties={renderInspector}
       />
       <AddAssetModal isOpen={isUploadModalOpen} onClose={() => setIsUploadModalOpen(false)} projectId={projectId} onAssetAdded={(newAssets: LibraryAsset[]) => setLibraryAssets(newAssets)} />
 
