@@ -331,7 +331,6 @@ function EditorApp() {
             previewState={previewState}
             isPlaying={isPlaying}
             currentTime={timeline.currentTime}
-            totalDuration={timeline.duration}
             onPlayPause={() => setIsPlaying(!isPlaying)}
             onSeek={handleSeek}
             onTimeUpdate={timeline.setCurrentTime}

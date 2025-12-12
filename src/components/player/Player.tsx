@@ -1,19 +1,19 @@
 import React, { useRef } from 'react';
 import { Play, Volume2, Pause, RotateCcw } from 'lucide-react';
-import { PreviewMonitor } from '../inspector/PreviewMonitor'; // We can reuse the core monitor logic for now
+import { PreviewMonitor } from '../inspector/PreviewMonitor';
 
 import type { PreviewState } from '../../hooks/usePreviewLogic';
 
 interface PlayerProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
-    previewState: PreviewState;
+    previewState: PreviewState; // <--- Contains the actual content duration
     isPlaying: boolean;
     currentTime: number;
-    totalDuration?: number;
+    // totalDuration?: number; // <-- REMOVE this prop, as it's the padded timeline duration
     onPlayPause: () => void;
     onSeek: (time: number) => void;
     onTimeUpdate: (time: number) => void;
-    processedUrl?: string; // For "Result" view if we keep it
+    processedUrl?: string;
     projectDimensions?: { width: number; height: number };
 }
 
@@ -22,13 +22,15 @@ export const Player: React.FC<PlayerProps> = ({
     previewState,
     isPlaying,
     currentTime,
-    totalDuration = 0,
+    // totalDuration, // Removed from destructuring
     onPlayPause,
     onSeek,
     onTimeUpdate,
     projectDimensions
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
+    // Use the actual content duration from previewState
+    const contentDuration = previewState.totalDuration || 0;
 
     // Format time helper
     const formatTime = (s: number) => {
@@ -76,8 +78,8 @@ export const Player: React.FC<PlayerProps> = ({
                 <button
                     onClick={(e) => {
                         e.stopPropagation();
-                        // If near end, restart
-                        if (totalDuration > 0 && currentTime >= totalDuration - 0.1) {
+                        // Use contentDuration for restart logic
+                        if (contentDuration > 0 && currentTime >= contentDuration - 0.1) {
                             onSeek(0);
                             setTimeout(onPlayPause, 50);
                         } else {
@@ -86,7 +88,7 @@ export const Player: React.FC<PlayerProps> = ({
                     }}
                     className="w-8 h-8 flex items-center justify-center rounded-full bg-white text-black hover:scale-110 active:scale-95 transition-all shadow-lg shrink-0"
                 >
-                    {(totalDuration > 0 && currentTime >= totalDuration - 0.1) ?
+                    {(contentDuration > 0 && currentTime >= contentDuration - 0.1) ?
                         <RotateCcw size={14} strokeWidth={2.5} /> :
                         isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />
                     }
@@ -96,7 +98,7 @@ export const Player: React.FC<PlayerProps> = ({
                 <div className="font-mono text-xs font-medium text-zinc-400 select-none shrink-0 min-w-[80px]">
                     <span className="text-white">{formatTime(currentTime)}</span>
                     <span className="mx-1 opacity-50">/</span>
-                    <span>{formatTime(totalDuration)}</span>
+                    <span>{formatTime(contentDuration)}</span> {/* <-- Corrected to use contentDuration */}
                 </div>
 
                 {/* Scrubber */}
@@ -104,7 +106,7 @@ export const Player: React.FC<PlayerProps> = ({
                     <input
                         type="range"
                         min={0}
-                        max={totalDuration || 10}
+                        max={contentDuration || 10} // Scrubber max should also be content duration
                         step={0.05}
                         value={currentTime}
                         onChange={(e) => onSeek(parseFloat(e.target.value))}
