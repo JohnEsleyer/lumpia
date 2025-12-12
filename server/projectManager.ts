@@ -27,6 +27,13 @@ const PROJECTS_DIR = path.join(__dirname, 'projects');
  * Saves as [filename].jpg in the source folder.
  */
 async function ensureThumbnail(projectDir: string, videoFilename: string): Promise<string> {
+    const isImage = /\.(jpg|jpeg|png|webp|gif)$/i.test(videoFilename);
+    if (isImage) {
+        // Return the image itself as the thumbnail
+        // (The frontend will load /source/image.jpg)
+        return videoFilename;
+    }
+
     const sourceDir = path.join(projectDir, 'source');
     const videoPath = path.join(sourceDir, videoFilename);
     const thumbFilename = `${videoFilename}.jpg`;
@@ -144,7 +151,7 @@ export async function createProject(metadata: CreateProjectDTO, file?: Express.M
         }
 
         // 2. Generate Filmstrip (Background - slower) for Editor
-        generateFilmstrip(projectDir, safeName).catch(err =>
+        generateFilmstrip(projectDir, safeName, 30).catch(err =>
             console.error(`[Server] Background filmstrip generation failed for ${safeName}`, err)
         );
     }
@@ -172,6 +179,12 @@ export async function createProject(metadata: CreateProjectDTO, file?: Express.M
  * Otherwise, just moves the file.
  */
 async function processUploadedFile(inputPath: string, outputPath: string): Promise<void> {
+    const isImage = /\.(jpg|jpeg|png|webp|gif)$/i.test(inputPath);
+    if (isImage) {
+        return fs.rename(inputPath, outputPath);
+    }
+
+
     return new Promise((resolve, reject) => {
         // 1. Probe the file to check codec
         ffmpeg.ffprobe(inputPath, (err, metadata) => {
@@ -248,7 +261,7 @@ export async function addAsset(id: string, file: Express.Multer.File): Promise<v
     }
 
     // Trigger Filmstrip Generation (Background)
-    generateFilmstrip(projectDir, safeName).catch((err: unknown) =>
+    generateFilmstrip(projectDir, safeName, 30).catch((err: unknown) =>
         console.error(`[Server] Background filmstrip failed for ${safeName}:`, err)
     );
 }
@@ -279,7 +292,7 @@ export async function getProjectAssets(id: string): Promise<Array<{
         // but for this "server processing" requirement, we await to ensure images are ready.
         let frames: string[] = [];
         try {
-            frames = await generateFilmstrip(projectDir, assetFilename);
+            frames = await generateFilmstrip(projectDir, assetFilename, 30);
         } catch (err: unknown) {
             console.warn(`[Server] Failed to load filmstrip for ${assetFilename}`, err);
         }

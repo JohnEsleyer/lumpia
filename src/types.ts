@@ -4,6 +4,27 @@ export interface ProjectOperation {
     id: string;
 }
 
+export interface TimelineItem {
+    id: string;
+    resourceId: string; // ID of the asset
+    trackId: string;
+    start: number; // Start time in seconds on the timeline
+    duration: number; // Duration in seconds
+    startOffset: number; // Start offset in the media file
+    volume?: number;
+    playbackRate?: number;
+    // ... potentially other properties like filters, etc.
+}
+
+export interface TimelineTrack {
+    id: string;
+    type: 'video' | 'audio' | 'overlay';
+    name: string;
+    items: TimelineItem[];
+    isMuted?: boolean;
+    isLocked?: boolean;
+}
+
 export interface Project {
     id: string;
     name: string;
@@ -16,8 +37,13 @@ export interface Project {
     thumbnail?: string;
     createdAt: string;
     editorState?: {
-        nodes: any[];
-        edges: any[];
+        timeline?: {
+            tracks: TimelineTrack[];
+            duration: number; // Total timeline duration
+        }
+        // Deprecated graph state
+        nodes?: any[];
+        edges?: any[];
     };
 }
 
@@ -34,6 +60,12 @@ export interface SubtitleItem {
     start: number; // Seconds
     end: number;   // Seconds
     text: string;
+}
+
+export interface SubtitleSettings {
+    x: number;
+    y: number;
+    scale: number;
 }
 
 export interface CreateProjectDTO {

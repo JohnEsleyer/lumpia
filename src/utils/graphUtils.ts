@@ -69,7 +69,10 @@ const extractNodeData = (node: Node) => {
             end: getNumber(data.endOffset, data.sourceDuration || 10),
             volume: getNumber(data.volume, 1.0),
             playbackRate: getNumber(data.playbackRate, 1.0),
-            label: data.label
+            label: data.label,
+            // Add these fields
+            sourceDuration: data.sourceDuration,
+            filmstrip: data.filmstrip
         };
     }
 
@@ -82,6 +85,17 @@ const extractNodeData = (node: Node) => {
             start: getNumber(data.startOffset, 0),
             end: getNumber(data.endOffset, data.duration || 10),
             volume: getNumber(data.volume, 1.0),
+            label: data.label
+        };
+    }
+
+    if (node.type === 'image') {
+        const data = node.data as any;
+        return {
+            id: node.id,
+            type: 'image',
+            url: data.url,
+            duration: typeof data.duration === 'number' ? data.duration : 3,
             label: data.label
         };
     }

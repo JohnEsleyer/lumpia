@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { VideoTimelineSlider } from './VideoTimelineSlider';
@@ -69,7 +69,7 @@ export const VideoTrimmer: React.FC<VideoTrimmerProps> = ({
                 filmstrip={filmstrip}
                 onRangeChange={handleRangeChange}
                 // Optional: When dragging handle, seek the video to that point for visual feedback
-                onSeek={(t) => onPreviewChange(start, end)}
+                onSeek={() => onPreviewChange(start, end)}
             />
 
             {/* Precision Controls */}

@@ -124,39 +124,16 @@ function Dashboard() {
 }
 
 function ProjectCard({ project, onDelete }: { project: Project, onDelete: (e: React.MouseEvent) => void }) {
-    const videoRef = useRef<HTMLVideoElement>(null);
-
     return (
         <Link
             to="/project/$projectId"
             params={{ projectId: project.id }}
             className="group relative bg-slate-900 border border-slate-800 hover:border-blue-500/50 rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-900/10 flex flex-col h-full"
-            onMouseEnter={() => {
-                if (videoRef.current) {
-                    videoRef.current.currentTime = 0;
-                    videoRef.current.play().catch(() => { });
-                }
-            }}
-            onMouseLeave={() => {
-                if (videoRef.current) {
-                    videoRef.current.pause();
-                }
-            }}
         >
-            {/* Thumbnail / Video Preview */}
+            {/* Thumbnail */}
             <div className="aspect-video bg-black relative overflow-hidden border-b border-white/5">
-                {project.currentHead ? (
-                    <video
-                        ref={videoRef}
-                        src={`http://localhost:3001${project.currentHead}`}
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300"
-                        muted
-                        loop
-                        playsInline
-                        poster={project.thumbnail}
-                    />
-                ) : project.thumbnail ? (
-                    <img src={project.thumbnail} alt="" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300" />
+                {project.thumbnail ? (
+                    <img src={`http://localhost:3001${project.thumbnail}`} alt="" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-300" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center bg-slate-950 text-slate-700">
                         <span className="text-4xl grayscale opacity-50">📼</span>

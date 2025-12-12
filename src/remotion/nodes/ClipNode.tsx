@@ -29,10 +29,44 @@ export const ClipNode = ({ id, data, selected }: NodeProps<ClipNodeType>) => {
     const duration = data.endOffset - data.startOffset;
 
     const thumbnails = useMemo(() => {
-        if (data.filmstrip && data.filmstrip.length > 0) return data.filmstrip.slice(0, 5);
-        if (data.thumbnailUrl) return [data.thumbnailUrl];
-        return [];
-    }, [data.filmstrip, data.thumbnailUrl]);
+        if (!data.filmstrip || data.filmstrip.length === 0) {
+            if (data.thumbnailUrl) return [data.thumbnailUrl];
+            return [];
+        }
+
+        // If we have very few frames, just return them
+        if (data.filmstrip.length <= 5) return data.filmstrip;
+
+        // Calculate indices based on startOffset and endOffset
+        const totalFrames = data.filmstrip.length;
+        const sourceDuration = data.sourceDuration || 10;
+
+        // Ensure offsets are within bounds
+        const start = Math.max(0, data.startOffset);
+        const end = Math.min(sourceDuration, data.endOffset);
+
+        const startIndex = Math.floor((start / sourceDuration) * totalFrames);
+        const endIndex = Math.ceil((end / sourceDuration) * totalFrames);
+
+        // Get the slice of frames relevant to the trimmed section
+        const safeStartIndex = Math.max(0, Math.min(startIndex, totalFrames - 1));
+        const safeEndIndex = Math.max(safeStartIndex + 1, Math.min(endIndex, totalFrames));
+
+        const relevantFrames = data.filmstrip.slice(safeStartIndex, safeEndIndex);
+
+        if (relevantFrames.length === 0) return [data.filmstrip[safeStartIndex] || data.filmstrip[0]];
+
+        // Sample 5 frames from the relevant frames
+        if (relevantFrames.length <= 5) return relevantFrames;
+
+        const step = (relevantFrames.length - 1) / 4;
+        const result = [];
+        for (let i = 0; i < 5; i++) {
+            const index = Math.round(i * step);
+            result.push(relevantFrames[index]);
+        }
+        return result;
+    }, [data.filmstrip, data.thumbnailUrl, data.startOffset, data.endOffset, data.sourceDuration]);
 
     const handleDelete = (e: React.MouseEvent) => {
         e.stopPropagation();

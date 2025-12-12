@@ -1,3 +1,4 @@
+// server/processor.ts
 import ffmpeg from 'fluent-ffmpeg';
 import path from 'path';
 import fs from 'fs/promises';
@@ -120,7 +121,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
                 })
                 .run();
 
-            // --- 4. STITCH / RENDER OPERATION (Video + Audio Mixing) ---
+            // --- 4. STITCH / RENDER OPERATION (Video + Images + Audio Mixing) ---
         } else if (operation.type === 'stitch') {
             const clips = operation.params.clips || [];
             const audioClips = operation.params.audioClips || [];
@@ -128,7 +129,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
             // If no clips, nothing to render
             if (!clips.length) {
-                return reject(new Error("No video clips provided for stitching"));
+                return reject(new Error("No clips provided for stitching"));
             }
 
             const tempFiles: string[] = [];
@@ -149,7 +150,7 @@ export async function processOperation(project: Project, operation: ProjectOpera
             };
 
             try {
-                // --- STEP 4A: PROCESS VIDEO CLIPS ---
+                // --- STEP 4A: PROCESS VIDEO/IMAGE CLIPS ---
                 const processedVideoParts: string[] = [];
                 const totalVideoClips = clips.length;
                 const videoStageWeight = 50;
@@ -161,57 +162,97 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
                     // Verify file exists
                     try { await fs.access(inputPath); }
-                    catch { throw new Error(`Video file not found: ${inputPath}`); }
+                    catch { throw new Error(`File not found: ${inputPath}`); }
 
-                    // Calculate Duration based on Source Trimming
-                    let duration = clip.end - clip.start;
-                    if (duration < 0.1) duration = 0.1;
+                    // Check if Image (based on type from frontend OR extension)
+                    const isImage = clip.type === 'image' || /\.(jpg|jpeg|png|webp|gif)$/i.test(clip.url);
 
-                    // Apply Filters: Speed & Volume
-                    const speed = clip.playbackRate || 1.0;
-                    const volume = clip.volume !== undefined ? clip.volume : 1.0;
-
-                    // FFmpeg Filters
-                    // 1. setpts (Video Speed): Inverse. 2x speed means frames displayed for 0.5x time.
-                    // 2. atempo (Audio Speed): Direct. 2x speed means 2x tempo.
-                    //    Limitation: atempo limited to 0.5-2.0. We chain them if outside range, but for simplicity assuming 0.5-2.0 here.
-                    const videoFilter = `setpts=${1 / speed}*PTS`;
-
-                    // Simple logic for atempo chaining if speed > 2 or < 0.5 (basic implementation)
-                    let audioFilter = '';
-                    if (speed >= 0.5 && speed <= 2.0) {
-                        audioFilter = `atempo=${speed},volume=${volume}`;
-                    } else if (speed > 2.0) {
-                        audioFilter = `atempo=2.0,atempo=${speed / 2},volume=${volume}`;
-                    } else {
-                        audioFilter = `atempo=0.5,atempo=${speed * 2},volume=${volume}`;
-                    }
-
-                    // Trim and Normalize (important for concatenation)
                     await new Promise<void>((res, rej) => {
-                        ffmpeg(inputPath)
-                            .setStartTime(clip.start)
-                            .setDuration(duration) // This is duration *before* speed change
-                            .outputOptions([
-                                '-c:v libx264', '-preset ultrafast', '-crf 23', // Standardize video
-                                '-c:a aac', '-ar 44100', '-ac 2',               // Standardize audio
-                                `-filter:v ${videoFilter}`,
-                                `-filter:a ${audioFilter}`
-                            ])
-                            .output(tempPath)
-                            .on('progress', (p) => {
-                                const clipWeight = videoStageWeight / totalVideoClips;
-                                const clipBase = (i * clipWeight);
-                                const percent = p.percent || 0;
-                                updateStitchProgress(0, 1, clipBase + (clipWeight * (percent / 100)));
-                            })
-                            .on('end', () => {
-                                const clipWeight = videoStageWeight / totalVideoClips;
-                                updateStitchProgress(0, 1, (i + 1) * clipWeight);
-                                res();
-                            })
-                            .on('error', rej)
-                            .run();
+                        const clipWeight = videoStageWeight / totalVideoClips;
+                        const clipBase = (i * clipWeight);
+
+                        if (isImage) {
+                            // --- IMAGE PROCESSING PATH ---
+                            // 1. Loop image
+                            // 2. Generate silent audio (anullsrc)
+                            // 3. Scale & Pad to match project dimensions
+                            // 4. Set duration explicitly
+                            const duration = clip.duration || 3;
+                            const width = project.width || 1920;
+                            const height = project.height || 1080;
+
+                            ffmpeg()
+                                // Input 0: Image
+                                .input(inputPath)
+                                .inputOptions(['-loop 1'])
+                                // Input 1: Silent Audio
+                                .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+                                .inputFormat('lavfi')
+                                .outputOptions([
+                                    `-t ${duration}`, // Duration for the whole output
+                                    '-c:v libx264',
+                                    '-preset ultrafast',
+                                    '-pix_fmt yuv420p',
+                                    // Scale to fit, Pad to center, Square pixels
+                                    `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+                                    '-c:a aac',
+                                    '-shortest' // Stop when duration ends (driven by -t)
+                                ])
+                                .output(tempPath)
+                                .on('progress', (p) => {
+                                    // Fake progress for image generation usually instant, but good to have
+                                    updateStitchProgress(0, 1, clipBase + 50);
+                                })
+                                .on('end', () => {
+                                    updateStitchProgress(0, 1, (i + 1) * clipWeight);
+                                    res();
+                                })
+                                .on('error', (err) => {
+                                    console.error(`Error processing image ${clip.url}:`, err);
+                                    rej(err);
+                                })
+                                .run();
+
+                        } else {
+                            // --- VIDEO PROCESSING PATH ---
+                            let duration = clip.end - clip.start;
+                            if (duration < 0.1) duration = 0.1;
+
+                            const speed = clip.playbackRate || 1.0;
+                            const volume = clip.volume !== undefined ? clip.volume : 1.0;
+
+                            const videoFilter = `setpts=${1 / speed}*PTS`;
+
+                            let audioFilter = '';
+                            if (speed >= 0.5 && speed <= 2.0) {
+                                audioFilter = `atempo=${speed},volume=${volume}`;
+                            } else if (speed > 2.0) {
+                                audioFilter = `atempo=2.0,atempo=${speed / 2},volume=${volume}`;
+                            } else {
+                                audioFilter = `atempo=0.5,atempo=${speed * 2},volume=${volume}`;
+                            }
+
+                            ffmpeg(inputPath)
+                                .setStartTime(clip.start)
+                                .setDuration(duration)
+                                .outputOptions([
+                                    '-c:v libx264', '-preset ultrafast', '-crf 23',
+                                    '-c:a aac', '-ar 44100', '-ac 2',
+                                    `-filter:v ${videoFilter}`,
+                                    `-filter:a ${audioFilter}`
+                                ])
+                                .output(tempPath)
+                                .on('progress', (p) => {
+                                    const percent = p.percent || 0;
+                                    updateStitchProgress(0, 1, clipBase + (clipWeight * (percent / 100)));
+                                })
+                                .on('end', () => {
+                                    updateStitchProgress(0, 1, (i + 1) * clipWeight);
+                                    res();
+                                })
+                                .on('error', rej)
+                                .run();
+                        }
                     });
 
                     processedVideoParts.push(tempPath);
@@ -220,7 +261,6 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
                 // Create Video Concat List
                 const videoListFile = path.join(outputDir, `vid_list_${Date.now()}.txt`);
-                // Use forward slashes for FFmpeg concat file
                 const videoListContent = processedVideoParts.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
                 await fs.writeFile(videoListFile, videoListContent);
                 tempFiles.push(videoListFile);
@@ -307,9 +347,9 @@ export async function processOperation(project: Project, operation: ProjectOpera
 
                 // Scenario 1: Video only (No audio clips added)
                 if (!audioTrackPath) {
-                    // Even if no external audio, we might want to apply the global video mix gain
-                    // But 'copy' is faster if gain is 1.0. If gain != 1.0, we need to re-encode audio.
-                    // For simplicity, let's re-encode if gain is not 1.0, else copy.
+                    // Even if no external audio, we might want to apply the global video mix gain.
+                    // Note: Since we generated silent audio for images, they DO have an audio track now.
+                    // So we can safely map audio from the concat list.
 
                     if (globalMix.videoMixGain !== 1.0) {
                         await new Promise<void>((res, rej) => {
@@ -354,7 +394,6 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     const concatenatedVideoPath = path.join(outputDir, `concat_video_${Date.now()}.mp4`);
                     tempFiles.push(concatenatedVideoPath);
 
-                    // We split mix stage into 2 sub-steps: Concat Video (10%) + Final Mix (30%)
                     const concatWeight = 10;
                     const finalMixWeight = 30;
 
@@ -374,14 +413,13 @@ export async function processOperation(project: Project, operation: ProjectOpera
                     });
 
                     // 2. Mix the concatenated video with the concatenated audio
-                    // Apply Global Gains here
                     const vGain = globalMix.videoMixGain ?? 1.0;
                     const aGain = globalMix.audioMixGain ?? 1.0;
 
                     await new Promise<void>((res, rej) => {
                         ffmpeg()
-                            .input(concatenatedVideoPath) // Input 0
-                            .input(audioTrackPath!)       // Input 1
+                            .input(concatenatedVideoPath) // Input 0 (Video + potential silent/original audio)
+                            .input(audioTrackPath!)       // Input 1 (Overlay Audio)
                             .complexFilter([
                                 // Apply volume to each input first, then mix
                                 `[0:a]volume=${vGain}[a0]`,

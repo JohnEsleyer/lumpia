@@ -1,6 +1,6 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { Player, type PlayerRef, type CallbackListener } from '@remotion/player';
-import { MonitorPlay, ChevronDown, ChevronUp, RotateCcw, Pause, Play, Scissors, Minimize2, Maximize2 } from 'lucide-react';
+import { MonitorPlay, RotateCcw, Pause, Play, Scissors, Minimize2, Maximize2 } from 'lucide-react';
 import { PreviewComposition } from '../../remotion/PreviewComposition';
 import type { PreviewState } from '../../hooks/usePreviewLogic';
 
@@ -18,8 +18,10 @@ interface PreviewMonitorProps {
     isExpanded?: boolean;
     onToggleExpand?: () => void;
     projectDimensions?: { width: number; height: number };
-    trimRange?: { start: number; end: number }; // Existing prop from previous change
+    trimRange?: { start: number; end: number };
+    showControls?: boolean;
 }
+
 
 export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     previewState,
@@ -34,97 +36,66 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
     isExpanded,
     onToggleExpand,
     projectDimensions,
-    trimRange // Existing prop
+    // @ts-ignore
+    trimRange,
+    showControls = true
 }) => {
-    const playerRef = useRef<PlayerRef>(null);
-    const audioRef = useRef<HTMLAudioElement>(null); // Sidecar Audio Ref
-    const [showControls, setShowControls] = useState(true);
 
-    // Flags to manage sync loop
+    const playerRef = useRef<PlayerRef>(null);
+    const audioRef = useRef<HTMLAudioElement>(null);
     const isPlayerDriving = useRef(false);
     const lastAudioSrc = useRef<string | null>(null);
-
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onPlayPauseRef = useRef(onPlayPause);
 
-    // Use passed dimensions or fallback to 1080p
+    // Dimensions
     const width = projectDimensions?.width || 1920;
     const height = projectDimensions?.height || 1080;
+    const FPS = 30;
+    const durationInFrames = Math.max(1, Math.ceil((previewState.totalDuration || 1) * FPS));
 
+    // Update Refs
     useEffect(() => {
         onTimeUpdateRef.current = onTimeUpdate;
         onPlayPauseRef.current = onPlayPause;
     }, [onTimeUpdate, onPlayPause]);
 
-    const FPS = 30;
-    const durationInFrames = Math.max(1, Math.ceil((previewState.totalDuration || 1) * FPS));
-
-    // Memoized input props
+    // Input Props
     const inputProps = useMemo(() => ({
         clips: previewState.clips,
         audioClips: previewState.audioClips,
         fps: FPS
     }), [previewState.clips, previewState.audioClips, FPS]);
 
-    // --- SIDECAR AUDIO SYNC LOGIC ---
-    // ... (unchanged) ...
+    // --- AUDIO SYNC ---
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio) return;
-
-        // 1. Find which audio clip should be playing at this currentTime
-        // We look for a clip where: timelineStart <= currentTime < timelineEnd
         const activeAudioClip = previewState.audioClips.find(clip => {
             const end = clip.timelineStart + clip.timelineDuration;
             return currentTime >= clip.timelineStart && currentTime < end;
         });
 
-        // 2. If valid clip found
         if (activeAudioClip) {
-            // A. Handle Source Switching
             if (lastAudioSrc.current !== activeAudioClip.url) {
                 audio.src = activeAudioClip.url;
                 lastAudioSrc.current = activeAudioClip.url;
             }
-
-            // B. Calculate where we are INSIDE the audio file
-            // (Current Global Time - Clip Global Start) + Clip Trim Start
             const timeInFile = (currentTime - activeAudioClip.timelineStart) + activeAudioClip.start;
-
-            // C. Apply Volume
             audio.volume = activeAudioClip.volume ?? 1.0;
+            if (Math.abs(audio.currentTime - timeInFile) > 0.25) audio.currentTime = timeInFile;
 
-            // D. Handle Seek / Drift
-            // We only force the audio time if it's way off (> 0.2s) to allow natural playback 
-            // without stuttering, OR if we just paused/scrubbed.
-            if (Math.abs(audio.currentTime - timeInFile) > 0.25) {
-                audio.currentTime = timeInFile;
-            }
-
-            // E. Play/Pause State
             if (isPlaying) {
-                if (audio.paused) {
-                    audio.play().catch(e => console.warn("Audio play failed", e));
-                }
+                if (audio.paused) audio.play().catch(console.warn);
             } else {
                 if (!audio.paused) audio.pause();
             }
-
         } else {
-            // 3. No audio clip at this time
-            if (!audio.paused) {
-                audio.pause();
-            }
-            // Optional: reset src if you want silence to clear buffer
-            // audio.removeAttribute('src'); 
+            if (!audio.paused) audio.pause();
         }
-
     }, [currentTime, isPlaying, previewState.audioClips]);
 
-
-    // --- PLAYER SYNC LOGIC ---
-
-    // 1. Play/Pause
+    // --- PLAYER SYNC ---
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
@@ -132,28 +103,17 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         else if (!isPlaying && player.isPlaying()) player.pause();
     }, [isPlaying]);
 
-    // 2. Seeking (Scrubbing)
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
-
-        if (isPlayerDriving.current) {
-            isPlayerDriving.current = false;
-            return;
-        }
+        if (isPlayerDriving.current) { isPlayerDriving.current = false; return; }
 
         const playerFrame = player.getCurrentFrame();
         const targetFrame = Math.round(currentTime * FPS);
-
-        // Looser threshold while playing to prevent fighting
         const threshold = isPlaying ? 5 : 0.5;
-
-        if (Math.abs(playerFrame - targetFrame) > threshold) {
-            player.seekTo(targetFrame);
-        }
+        if (Math.abs(playerFrame - targetFrame) > threshold) player.seekTo(targetFrame);
     }, [currentTime, FPS, isPlaying]);
 
-    // 3. Time Update Listener
     useEffect(() => {
         const player = playerRef.current;
         if (!player) return;
@@ -171,16 +131,6 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return () => { player.removeEventListener('frameupdate', onFrame); };
     }, [isPlaying, durationInFrames, FPS]);
 
-    // --- TRIM LOOPING LOGIC ---
-    useEffect(() => {
-        if (!trimRange) return;
-
-        if (isPlaying && currentTime >= trimRange.end - 0.05) {
-            onSeek(0);
-        }
-    }, [currentTime, isPlaying, trimRange, onSeek]);
-
-
     const formatTime = (t: number) => {
         const m = Math.floor(t / 60);
         const s = Math.floor(t % 60);
@@ -188,59 +138,23 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return `${m}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     };
 
-    // --- START: REDESIGNED RENDERED RESULT VIEW ---
-    if (viewMode === 'result' && processedUrl) {
-        return (
-            <div className="flex flex-col h-full bg-[#050505] relative overflow-hidden">
-                {/* Main Video Player Area - FLEX-1 ensures it takes all available space above footer */}
-                <div className="flex-1 flex items-center justify-center relative z-10 p-4">
-                    <div
-                        // New container to apply aspect ratio and max-size without being flex-1
-                        className="relative max-w-full max-h-full rounded-lg bg-black shadow-2xl drop-shadow-2xl overflow-hidden ring-1 ring-white/10"
-                        style={{ aspectRatio: `${width}/${height}` }}
-                    >
-                        {/* The video element itself */}
-                        <video
-                            src={`http://localhost:3001${processedUrl}`}
-                            className="w-full h-full object-contain"
-                            controls
-                            autoPlay
-                        />
-                    </div>
-                </div>
-
-                {/* Footer/Control Bar for Rendered Result - Fixed Height */}
-                <div className="h-12 bg-[#0a0a0a]/80 backdrop-blur-md border-t border-white/5 p-2 px-4 flex justify-between items-center shrink-0 z-20">
-                    <div className="text-xs text-green-500 font-bold uppercase tracking-widest flex items-center gap-2">
-                        <MonitorPlay size={14} /> Rendered Result
-                    </div>
-
-                    {/* View Large Button (Reuses Cinema Mode toggle logic) */}
-                    {onToggleExpand && (
-                        <button
-                            onClick={onToggleExpand}
-                            className="p-1.5 bg-white/5 hover:bg-white/10 rounded-md text-white/70 hover:text-white transition-colors ml-4"
-                            title={isExpanded ? "Exit Expanded Mode" : "Expand Monitor (View Large)"}
-                        >
-                            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                        </button>
-                    )}
-                </div>
-            </div>
-        );
-    }
-    // --- END: REDESIGNED RENDERED RESULT VIEW ---
-
     const hasContent = previewState.clips.length > 0 || previewState.audioClips.length > 0;
 
-    // ... (rest of the component for the 'preview' mode is unchanged) ...
+    // --- RENDER ---
     return (
-        <div className={`flex flex-col h-full bg-black select-none group relative ${isExpanded ? 'rounded-2xl overflow-hidden' : ''}`}>
-            {/* Hidden Audio Element for Graph Preview */}
+        <div className={`relative w-full h-full bg-black overflow-hidden group select-none ${isExpanded ? 'rounded-none' : 'rounded-lg'}`}>
             <audio ref={audioRef} className="hidden" />
 
-            <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-[#050505]">
-                {hasContent ? (
+            {/* Content Layer */}
+            <div className="absolute inset-0 flex items-center justify-center bg-[#050505]">
+                {viewMode === 'result' && processedUrl ? (
+                    <video
+                        src={`http://localhost:3001${processedUrl}`}
+                        className="w-full h-full object-contain"
+                        controls={false} // Custom controls
+                        autoPlay
+                    />
+                ) : hasContent ? (
                     <Player
                         ref={playerRef}
                         component={PreviewComposition}
@@ -256,31 +170,27 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                         doubleClickToFullscreen
                     />
                 ) : (
-                    <div className="text-slate-600 flex flex-col items-center gap-2">
+                    <div className="text-zinc-700 flex flex-col items-center gap-2">
                         <MonitorPlay size={48} className="opacity-20" />
                         <span className="text-xs font-mono opacity-50">NO SIGNAL</span>
                     </div>
                 )}
-                {!showControls && (
-                    <button onClick={() => setShowControls(true)} className="absolute bottom-3 right-3 z-50 bg-black/60 hover:bg-black/90 text-white/50 hover:text-white p-2 rounded-lg backdrop-blur-md border border-white/10 transition-all shadow-lg animate-in fade-in zoom-in duration-200"><ChevronUp size={16} /></button>
-                )}
             </div>
+
+            {/* Click to Play/Pause Overlay (Invisible) */}
+            <div
+                className="absolute inset-0 z-10"
+                onClick={onPlayPause}
+                onDoubleClick={onToggleExpand}
+            />
+
+            {/* Controls Overlay - Appears on Hover */}
             {showControls && (
-                <div className="h-12 bg-[#0a0a0a] border-t border-white/5 flex items-center px-4 gap-4 shrink-0 z-30 animate-in slide-in-from-bottom-2 duration-200">
-                    <button
-                        onClick={() => {
-                            if (currentTime >= previewState.totalDuration - 0.1) {
-                                onSeek(0);
-                                setTimeout(onPlayPause, 50);
-                            } else {
-                                onPlayPause();
-                            }
-                        }}
-                        className="w-8 h-8 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-all"
-                    >
-                        {currentTime >= previewState.totalDuration - 0.1 ? <RotateCcw size={14} strokeWidth={2.5} /> : isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
-                    </button>
-                    <div className="flex-1 flex flex-col justify-center gap-1 group/timeline">
+                <div className="absolute bottom-0 left-0 right-0 z-20 p-4 pt-12 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 ease-in-out translate-y-2 group-hover:translate-y-0">
+
+                    <div className="flex flex-col gap-2">
+
+                        {/* Scrubber */}
                         <input
                             type="range"
                             min={0}
@@ -288,25 +198,66 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                             step={0.05}
                             value={currentTime}
                             onChange={(e) => onSeek(parseFloat(e.target.value))}
-                            className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
+                            className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white hover:accent-indigo-400 transition-all"
                         />
-                        <div className="flex justify-between text-[9px] font-mono text-slate-500">
-                            <span>{formatTime(currentTime)}</span>
-                            <span>{formatTime(previewState.totalDuration)}</span>
+
+                        {/* Bottom Row */}
+                        <div className="flex items-center justify-between mt-1">
+
+                            {/* Left: Playback Controls */}
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (currentTime >= previewState.totalDuration - 0.1) {
+                                            onSeek(0);
+                                            setTimeout(onPlayPause, 50);
+                                        } else {
+                                            onPlayPause();
+                                        }
+                                    }}
+                                    className="w-8 h-8 flex items-center justify-center rounded-full bg-white text-black hover:scale-110 active:scale-95 transition-all shadow-lg"
+                                >
+                                    {currentTime >= previewState.totalDuration - 0.1 ?
+                                        <RotateCcw size={14} strokeWidth={2.5} /> :
+                                        isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />
+                                    }
+                                </button>
+
+                                <div className="flex items-baseline gap-1.5 font-mono text-xs font-medium text-zinc-400 select-none">
+                                    <span className="text-white">{formatTime(currentTime)}</span>
+                                    <span className="opacity-50">/</span>
+                                    <span>{formatTime(previewState.totalDuration || 0)}</span>
+                                </div>
+                            </div>
+
+                            {/* Right: Tools & Toggles */}
+                            <div className="flex items-center gap-2">
+                                {onSplit && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onSplit(); }}
+                                        className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95"
+                                        title="Split Clip (S)"
+                                    >
+                                        <Scissors size={16} />
+                                    </button>
+                                )}
+
+                                {onToggleExpand && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+                                        className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95"
+                                        title={isExpanded ? "Exit Fullscreen" : "Fullscreen"}
+                                    >
+                                        {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-400">
-                        {onSplit && <button onClick={onSplit} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors" title="Split Clip"><Scissors size={14} /></button>}
-                        <div className="w-px h-4 bg-white/10 mx-1"></div>
-                        <button onClick={() => setShowControls(false)} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors" title="Hide Controls"><ChevronDown size={14} /></button>
-                        {onToggleExpand && (
-                            <button onClick={onToggleExpand} className="p-1.5 hover:bg-white/10 rounded-md hover:text-white transition-colors ml-1" title={isExpanded ? "Exit Expanded Mode" : "Expand Monitor"}>
-                                {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                            </button>
-                        )}
                     </div>
                 </div>
             )}
+
         </div>
     );
 };

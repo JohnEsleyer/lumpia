@@ -1,4 +1,4 @@
-
+// src/hooks/usePreviewLogic.ts
 import { type Node, type Edge } from '@xyflow/react';
 import { getConnectedSequence } from '../utils/graphUtils';
 import { useMemo } from 'react';
@@ -13,6 +13,10 @@ export interface PreviewClip {
     label?: string;
     timelineStart: number;
     timelineDuration: number;
+    sourceDuration?: number;
+    filmstrip?: string[];
+    // New Field
+    mediaType: 'video' | 'image';
 }
 
 export interface PreviewState {
@@ -40,19 +44,28 @@ export const usePreviewLogic = (
         };
 
         if (!activeNodeId) return defaultState;
-
         const activeNode = nodes.find(n => n.id === activeNodeId);
         if (!activeNode) return defaultState;
 
         const processSequence = (rawItems: any[]): PreviewClip[] => {
             let currentTimePointer = 0;
             return rawItems.map(item => {
-                const sourceDuration = item.end - item.start;
-                const speed = item.playbackRate || 1.0;
-                const timelineDuration = sourceDuration / speed;
+                const isImage = item.type === 'image';
+
+                // Determine Duration
+                let timelineDuration = 0;
+
+                if (isImage) {
+                    timelineDuration = item.duration || 3;
+                } else {
+                    const sourceDuration = (item.end - item.start);
+                    const speed = item.playbackRate || 1.0;
+                    timelineDuration = sourceDuration / speed;
+                }
 
                 const clip: PreviewClip = {
                     ...item,
+                    mediaType: isImage ? 'image' : 'video',
                     timelineStart: currentTimePointer,
                     timelineDuration: timelineDuration,
                 };
@@ -64,10 +77,7 @@ export const usePreviewLogic = (
 
         // --- SCENARIO A: RENDER NODE ---
         if (activeNode.type === 'render') {
-            // 1. Traverse Video Chain (connected to 'video-in')
             const rawClips = getConnectedSequence(nodes, edges, activeNodeId, 'video-in');
-
-            // 2. Traverse Audio Chain (connected to 'audio-in')
             const rawAudioClips = getConnectedSequence(nodes, edges, activeNodeId, 'audio-in');
 
             const clips = processSequence(rawClips);
@@ -76,13 +86,11 @@ export const usePreviewLogic = (
             const videoDuration = clips.reduce((acc, c) => acc + c.timelineDuration, 0);
             const audioDuration = audioClips.reduce((acc, c) => acc + c.timelineDuration, 0);
 
-            const totalDuration = videoDuration > 0 ? videoDuration : audioDuration;
-
             return {
                 previewType: 'sequence',
                 clips,
                 audioClips,
-                totalDuration,
+                totalDuration: Math.max(videoDuration, audioDuration),
                 activeNodeId,
                 activeNodeType: 'render'
             };
@@ -104,7 +112,10 @@ export const usePreviewLogic = (
                 playbackRate: speed,
                 label: data.label,
                 timelineStart: 0,
-                timelineDuration: timelineDuration
+                timelineDuration: timelineDuration,
+                sourceDuration: data.sourceDuration,
+                filmstrip: data.filmstrip,
+                mediaType: 'video'
             };
 
             return {
@@ -117,8 +128,37 @@ export const usePreviewLogic = (
             };
         }
 
-        // --- SCENARIO C: AUDIO NODE ---
+        // --- SCENARIO C: IMAGE NODE ---
+        if (activeNode.type === 'image') {
+            const data = activeNode.data as any;
+            const duration = data.duration || 3;
+
+            const clip: PreviewClip = {
+                id: activeNode.id,
+                url: data.url,
+                start: 0,
+                end: duration,
+                volume: 0,
+                playbackRate: 1,
+                label: data.label,
+                timelineStart: 0,
+                timelineDuration: duration,
+                mediaType: 'image'
+            };
+
+            return {
+                previewType: 'clip',
+                clips: [clip],
+                audioClips: [],
+                totalDuration: duration,
+                activeNodeId,
+                activeNodeType: 'image'
+            };
+        }
+
+        // --- SCENARIO D: AUDIO NODE ---
         if (activeNode.type === 'audio') {
+            // ... (keep existing audio logic) ...
             const data = activeNode.data as any;
             const sourceDuration = data.endOffset - data.startOffset;
 
@@ -131,7 +171,8 @@ export const usePreviewLogic = (
                 playbackRate: 1.0,
                 label: data.label,
                 timelineStart: 0,
-                timelineDuration: sourceDuration
+                timelineDuration: sourceDuration,
+                mediaType: 'video' // Doesn't matter for audio tracks
             };
 
             return {
