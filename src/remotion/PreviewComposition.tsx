@@ -1,5 +1,7 @@
 import React from 'react';
-import { AbsoluteFill, Sequence, Html5Video, Img, Audio } from 'remotion';
+import { AbsoluteFill, Sequence, Html5Video, Img } from 'remotion';
+// Import the new Audio component (assuming `@remotion/media` is installed)
+import { Audio } from '@remotion/media';
 import type { PreviewVisual, AudioSource } from '../hooks/useTimelinePreview';
 
 export interface PreviewCompositionProps {
@@ -39,10 +41,10 @@ export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
                         ) : (
                             <Html5Video
                                 src={clip.url}
+                                // NOTE: Html5Video uses `startFrom` (or `trimBefore` in modern versions).
+                                // Keeping `startFrom` here for backwards compatibility with Remotion's Html5Video.
                                 startFrom={startFromFrame}
                                 playbackRate={clip.playbackRate}
-                                // ALWAYS Mute during preview (AudioEngine handles it). 
-                                // Unmute ONLY during render if it's a video track we want sound from.
                                 muted={!isRendering}
                                 style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                                 crossOrigin="anonymous"
@@ -58,7 +60,8 @@ export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
 
                 const durationInFrames = Math.max(1, Math.ceil((clip.timelineEnd - clip.timelineStart) * fps));
                 const fromFrame = Math.round(clip.timelineStart * fps);
-                const startFromFrame = Math.round(clip.sourceStartOffset * fps);
+                // Map old `startFrom` concept to new `trimBefore` prop (in frames)
+                const trimBeforeFrames = Math.round(clip.sourceStartOffset * fps);
 
                 return (
                     <Sequence
@@ -66,9 +69,10 @@ export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
                         from={fromFrame}
                         durationInFrames={durationInFrames}
                     >
+                        {/* Using the new Audio component from @remotion/media */}
                         <Audio
                             src={clip.url}
-                            startFrom={startFromFrame}
+                            trimBefore={trimBeforeFrames} // Use trimBefore for source offset
                             volume={clip.volume}
                             playbackRate={clip.playbackRate}
                         />
