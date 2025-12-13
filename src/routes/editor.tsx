@@ -1,10 +1,12 @@
+// src/routes/editor.tsx
+
 import { createFileRoute } from '@tanstack/react-router';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Clapperboard, Plus, Save, Scissors, Download } from 'lucide-react';
+import { Clapperboard, Plus, Save, Scissors, Download, Trash2, Music } from 'lucide-react'; // Added Trash2, Music
 import React from 'react';
 
-import { getProject, getProjectAssets, updateProject, renderSequence } from '../api';
-import type { Project, ProjectAsset, TimelineItem } from '../types';
+import { getProject, getProjectAssets, updateProject, renderSequence, deleteAsset } from '../api'; // Import deleteAsset
+import type { Project, ProjectAsset } from '../types';
 import { Button } from '../components/ui/Button';
 
 // Layout & Components
@@ -41,11 +43,13 @@ const LibraryPanel = ({
   onOpenUploadModal,
   onDragStart,
   onTrimAudio,
+  onDeleteAsset, // NEW PROP
 }: {
   assets: LibraryAsset[],
   onOpenUploadModal: () => void,
   onDragStart: (e: React.DragEvent, type: string, payload: any) => void,
-  onTrimAudio: (asset: LibraryAsset) => void
+  onTrimAudio: (asset: LibraryAsset) => void,
+  onDeleteAsset: (assetName: string) => void, // NEW PROP
 }) => (
   <div className="flex flex-col h-full bg-zinc-925">
     <div className="h-14 border-b border-zinc-900 flex items-center px-4 bg-zinc-950/30">
@@ -54,38 +58,65 @@ const LibraryPanel = ({
       </span>
     </div>
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-      <div
+      {/* Upload Button */}
+      <Button
         onClick={onOpenUploadModal}
-        className="mb-6 p-4 border border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 hover:border-indigo-500/50 transition-all cursor-pointer group flex flex-col items-center justify-center gap-3 text-center"
+        className="w-full mb-6 py-4 border-dashed border-zinc-700 bg-zinc-900 hover:bg-zinc-800 transition-all text-xs font-bold text-zinc-300"
       >
-        <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center mb-3 text-zinc-400">
-          <Plus size={18} />
-        </div>
-        <div>
-          <p className="text-xs font-bold text-zinc-300 group-hover:text-white transition-colors">Upload Media</p>
-        </div>
-      </div>
+        <Plus size={16} /> Upload New Media
+      </Button>
+
       <div className="grid grid-cols-2 gap-3">
         {assets.map(asset => {
           const isAudio = isAudioFile(asset.name);
           const isImage = isImageFile(asset.name);
           const dragType = isAudio ? 'asset-audio' : (isImage ? 'asset-image' : 'asset-video');
+
+          // Determine preview image source
+          const previewSrc = isImage
+            ? `http://localhost:3001${asset.url}`
+            : (asset.thumbnailUrl ? `http://localhost:3001${asset.thumbnailUrl}` : '');
+
           return (
             <div
               key={asset.name}
               draggable
               onDragStart={(e) => onDragStart(e, dragType, asset)}
-              className="group flex flex-col gap-2 p-2 rounded-lg border border-zinc-800 bg-zinc-900 cursor-grab hover:border-indigo-500/50"
+              className="group flex flex-col gap-2 p-2 rounded-lg border border-zinc-800 bg-zinc-900 cursor-grab hover:border-blue-500/50 relative"
             >
+              {/* Thumbnail */}
               <div className="aspect-video w-full rounded-md overflow-hidden shrink-0 relative flex items-center justify-center bg-black">
-                {isImage || asset.thumbnailUrl ? (
-                  <img src={`http://localhost:3001${isImage ? asset.url : asset.thumbnailUrl}`} className="w-full h-full object-cover" />
-                ) : <Clapperboard className="text-zinc-600" />}
+                {previewSrc ? (
+                  <img src={previewSrc} className="w-full h-full object-cover" alt={asset.name} />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-zinc-600">
+                    {isAudio ? <Music size={24} /> : <Clapperboard size={24} />}
+                  </div>
+                )}
               </div>
+
+              {/* Info */}
               <div className="text-[10px] font-bold truncate text-zinc-400">{asset.name}</div>
-              {isAudio && (
-                <button onClick={(e) => { e.stopPropagation(); onTrimAudio(asset); }} className="absolute top-2 right-2 p-1 bg-zinc-900 text-white rounded opacity-0 group-hover:opacity-100"><Scissors size={12} /></button>
-              )}
+
+              {/* Action Buttons Overlay */}
+              <div className="absolute top-2 right-2 flex gap-1 transition-opacity opacity-0 group-hover:opacity-100 duration-200">
+                {isAudio && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onTrimAudio(asset); }}
+                    className="p-1 bg-zinc-900/80 text-white rounded hover:bg-zinc-800"
+                    title="Trim Audio"
+                  >
+                    <Scissors size={12} />
+                  </button>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDeleteAsset(asset.name); }}
+                  className="p-1 bg-zinc-900/80 text-red-400 rounded hover:bg-red-500/10"
+                  title="Delete Asset and Clips"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
             </div>
           );
         })}
@@ -134,11 +165,8 @@ function EditorApp() {
   }, [projectId]);
 
   const onDragStart = (e: React.DragEvent, type: string, payload: ProjectAsset) => {
-    // Add mediaType heuristic for better handling in logic
     const mediaType = isAudioFile(payload.name) ? 'audio' : (isImageFile(payload.name) ? 'image' : 'video');
     const assetPayload = { ...payload, mediaType };
-
-    // Update payload dataTransfer to include mediaType
     e.dataTransfer.setData('application/json', JSON.stringify({ type, payload: assetPayload }));
   };
 
@@ -154,21 +182,61 @@ function EditorApp() {
   }, [timeline]);
 
   const handleAssetDrop = useCallback((trackId: string, payload: ProjectAsset, dropTime: number) => {
-    // The dropTime argument is the exact timeline position (in seconds) where the user dropped the asset.
     timeline.addClip(trackId, payload, dropTime);
   }, [timeline]);
 
+  // --- Asset Upload Handler (Prevent Double Imports) ---
+  const handleAssetAdded = (newAssets: ProjectAsset[]) => {
+    setLibraryAssets(prev => {
+      const existingNames = new Set(prev.map(a => a.name));
+      const filteredNewAssets = newAssets.filter(a => {
+        if (existingNames.has(a.name)) {
+          console.warn(`Asset ${a.name} already exists. Skipping import.`);
+          return false;
+        }
+        return true;
+      });
+      return [...prev, ...filteredNewAssets];
+    });
+  };
 
-  // --- EXPORT LOGIC ---
+  // --- Asset Deletion Handler (Cascading) ---
+  const handleDeleteAsset = async (assetName: string) => {
+    if (!projectId) return;
+
+    const confirmDelete = window.confirm(`Are you sure you want to delete asset "${assetName}"? This will also remove all timeline clips using this file.`);
+    if (!confirmDelete) return;
+
+    try {
+      // 1. Delete the file on the backend
+      await deleteAsset(projectId, assetName);
+
+      // 2. Cascade deletion on the timeline
+      timeline.removeClipsByAssetId(assetName);
+
+      // 3. Remove asset from local state
+      setLibraryAssets(prev => prev.filter(a => a.name !== assetName));
+
+      // Clear selection if the deleted asset was part of the selected clip
+      if (selectedItemId) {
+        const selectedClip = timeline.tracks.flatMap(t => t.items).find(i => i.id === selectedItemId);
+        if (selectedClip?.resourceId === assetName) {
+          setSelectedItemId(null);
+        }
+      }
+
+    } catch (e) {
+      console.error("Failed to delete asset:", e);
+      alert("Failed to delete asset.");
+    }
+  };
+
+
   const handleExport = async () => {
     if (!projectId) return;
     setIsRendering(true);
     try {
-      // Collect all clips for the backend to render
-      // In a real app, you might send the whole project state.
-      // Here we assume the backend just needs to know the sequence.
-      // We trigger the backend render endpoint.
-      await renderSequence(projectId, []); // Modify API to accept full timeline state if needed, or backend reads state.json
+      await renderSequence(projectId, []);
       alert("Render started! Check backend console.");
     } catch (e) {
       console.error(e);
@@ -185,7 +253,6 @@ function EditorApp() {
     });
   };
 
-  // --- Inspector Logic ---
   const renderInspector = useMemo(() => {
     const track = timeline.tracks.find(t => t.items.some(i => i.id === selectedItemId));
     const item = track?.items.find(i => i.id === selectedItemId);
@@ -206,7 +273,7 @@ function EditorApp() {
         itemData={{ ...item, playbackRate: item.playbackRate ?? 1, volume: item.volume ?? 1 }}
         assetData={{ ...asset, url: asset.url }}
         committedItemData={{ start: item.start, startOffset: item.startOffset, playbackRate: item.playbackRate ?? 1, currentCommittedSourceEnd: item.startOffset + item.duration }}
-        onUpdateTimelinePosition={(id, start, dur, off) => timeline.trimClip(track.id, id, start, dur, true)} // Simplified mapping
+        onUpdateTimelinePosition={(id, start, dur, off) => timeline.trimClip(track.id, id, start, dur, true)}
         onSeek={handleSeek}
         globalTimelineTime={timeline.currentTime}
         onUpdateTrimOverride={(s, e) => setTrimOverride({ id: item.id, startOffset: s, endOffset: e })}
@@ -232,7 +299,6 @@ function EditorApp() {
         playbackRate={1}
       />
 
-
       <EditorLayout
         isLibraryVisible={isLibraryVisible}
         setIsLibraryVisible={setIsLibraryVisible}
@@ -244,11 +310,12 @@ function EditorApp() {
             onOpenUploadModal={() => setIsUploadModalOpen(true)}
             onDragStart={onDragStart}
             onTrimAudio={(a) => { setTrimmerAsset(a); setIsTrimmerOpen(true); }}
+            onDeleteAsset={handleDeleteAsset} // Pass the new handler
           />
         }
         player={
           <div className="relative w-full h-full flex flex-col">
-            {/* Header Toolbar */}
+            {/* Header Toolbar (Unchanged) */}
             <div className="absolute top-4 right-4 z-50 flex gap-2">
               <Button onClick={handleSave} className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-600">
                 <Save size={14} className="mr-2" /> Save
@@ -257,14 +324,6 @@ function EditorApp() {
                 <Download size={14} className="mr-2" /> Export Video
               </Button>
             </div>
-
-            {/* TimelineAudioEngine is mounted here for scope access */}
-            <TimelineAudioEngine
-              audioSources={previewState.audioSources}
-              currentTime={timeline.currentTime}
-              isPlaying={isPlaying}
-              playbackRate={1}
-            />
 
             <Player
               videoRef={videoRef}
@@ -286,13 +345,12 @@ function EditorApp() {
             duration={timeline.duration}
             currentTime={timeline.currentTime}
             onSeek={handleSeek}
-            // Clips now use ripple move, handled internally by useTimelineLogic
             onItemMove={(id, track, start) => timeline.moveClip(track, id, start)}
             onItemTrim={timeline.trimClip}
             selectedItemId={selectedItemId}
             onItemClick={setSelectedItemId}
             getAssetData={(id) => libraryAssets.find(a => a.name === id)}
-            onAssetDrop={handleAssetDrop} // Updated handler now receives dropTime
+            onAssetDrop={handleAssetDrop}
             activeTool={activeTool}
             onToggleMute={timeline.toggleTrackMute}
             onDeleteClip={(tid, iid) => timeline.deleteClip(tid, iid)}
@@ -302,7 +360,12 @@ function EditorApp() {
       />
 
       {/* Modals */}
-      <AddAssetModal isOpen={isUploadModalOpen} onClose={() => setIsUploadModalOpen(false)} projectId={projectId!} onAssetAdded={a => setLibraryAssets(p => [...p, ...a])} />
+      <AddAssetModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        projectId={projectId!}
+        onAssetAdded={handleAssetAdded} // Use the new handler
+      />
       <AudioTrimmerModal isOpen={isTrimmerOpen} onClose={() => setIsTrimmerOpen(false)} asset={trimmerAsset} onAddToTimeline={(s, d) => {
         const track = timeline.tracks.find(t => t.type === 'audio');
         if (track && trimmerAsset) timeline.addClip(track.id, trimmerAsset, timeline.currentTime, { startOffset: s, duration: d });
