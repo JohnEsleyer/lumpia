@@ -23,7 +23,7 @@ import { AudioInspector } from '../components/inspector/AudioInspector';
 import { ImageInspector } from '../components/inspector/ImageInspector';
 
 // Timeline Components
-import { TimelineContainer, type TimelineContainerHandle } from '../components/timeline/TimelineContainer'; // Import Handle type
+import { TimelineContainer, type TimelineContainerHandle } from '../components/timeline/TimelineContainer';
 import { useTimelineLogic } from '../hooks/useTimelineLogic';
 import { useTimelinePreview } from '../hooks/useTimelinePreview';
 import { AddAssetModal } from '../components/modals/AddAssetModal';
@@ -226,14 +226,12 @@ function EditorApp() {
   // --- SYNC ENGINE ---
 
   // 1. When Player Updates Time (High Frequency)
-  // This is passed to the Player component
   const handlePlayerTimeUpdate = useCallback((time: number) => {
-    // A. Imperatively update the red line on the timeline (Zero React Renders)
+    // A. Imperatively update the red line on the timeline
+    // Note: If timeline is hidden, this ref might be null, which is fine
     timelineContainerRef.current?.setPlayheadTime(time);
 
-    // B. Optionally update React state for other UI (like property panels)
-    // We throttle this or allow it depending on performance needs. 
-    // For now, we update it to keep the rest of the UI (inspectors) in sync.
+    // B. Update React state
     timeline.setCurrentTime(time);
   }, [timeline]);
 
@@ -241,13 +239,10 @@ function EditorApp() {
   const handleSeek = (time: number) => {
     const clampedTime = Math.max(0, Math.min(time, previewState.totalDuration));
 
-    // Update React State
     timeline.setCurrentTime(clampedTime);
 
     // Update Video/Player Position
     if (videoRef.current) {
-      // If playing, we might want to pause or just jump
-      // Setting currentTime on videoRef usually jumps.
       videoRef.current.currentTime = clampedTime;
     }
 
@@ -479,7 +474,7 @@ function EditorApp() {
           />
         }
         timeline={
-          <div className="h-full flex flex-col">
+          <div className="h-full flex flex-col relative">
             <div className="absolute top-[-3rem] right-4 flex gap-2 z-50">
               <Button
                 onClick={() => setActiveTool(activeTool === 'split' ? 'cursor' : 'split')}
