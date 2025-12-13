@@ -2,11 +2,12 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { Player, type PlayerRef, type CallbackListener } from '@remotion/player';
 import { MonitorPlay, RotateCcw, Pause, Play, Scissors, Minimize2, Maximize2 } from 'lucide-react';
 import { PreviewComposition } from '../../remotion/PreviewComposition';
-import type { PreviewState } from '../../hooks/usePreviewLogic';
+// CHANGED: Import from useTimelinePreview
+import type { PreviewState } from '../../hooks/useTimelinePreview';
 
 interface PreviewMonitorProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
-    previewState: PreviewState;
+    previewState: PreviewState; // Now uses the new { visuals, audioSources, totalDuration } structure
     isPlaying: boolean;
     currentTime: number;
     onPlayPause: () => void;
@@ -42,9 +43,7 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
 }) => {
 
     const playerRef = useRef<PlayerRef>(null);
-    const audioRef = useRef<HTMLAudioElement>(null);
     const isPlayerDriving = useRef(false);
-    const lastAudioSrc = useRef<string | null>(null);
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onPlayPauseRef = useRef(onPlayPause);
 
@@ -60,40 +59,13 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         onPlayPauseRef.current = onPlayPause;
     }, [onTimeUpdate, onPlayPause]);
 
-    // Input Props
+    // Input Props for PreviewComposition
     const inputProps = useMemo(() => ({
-        clips: previewState.clips,
-        audioClips: previewState.audioClips,
-        fps: FPS
-    }), [previewState.clips, previewState.audioClips, FPS]);
-
-    // --- AUDIO SYNC ---
-    useEffect(() => {
-        const audio = audioRef.current;
-        if (!audio) return;
-        const activeAudioClip = previewState.audioClips.find(clip => {
-            const end = clip.timelineStart + clip.timelineDuration;
-            return currentTime >= clip.timelineStart && currentTime < end;
-        });
-
-        if (activeAudioClip) {
-            if (lastAudioSrc.current !== activeAudioClip.url) {
-                audio.src = activeAudioClip.url;
-                lastAudioSrc.current = activeAudioClip.url;
-            }
-            const timeInFile = (currentTime - activeAudioClip.timelineStart) + activeAudioClip.start;
-            audio.volume = activeAudioClip.volume ?? 1.0;
-            if (Math.abs(audio.currentTime - timeInFile) > 0.25) audio.currentTime = timeInFile;
-
-            if (isPlaying) {
-                if (audio.paused) audio.play().catch(console.warn);
-            } else {
-                if (!audio.paused) audio.pause();
-            }
-        } else {
-            if (!audio.paused) audio.pause();
-        }
-    }, [currentTime, isPlaying, previewState.audioClips]);
+        visuals: previewState.visuals,
+        audioSources: previewState.audioSources,
+        fps: FPS,
+        isRendering: false, // Tell Remotion to skip audio rendering (handled by TimelineAudioEngine)
+    }), [previewState.visuals, previewState.audioSources, FPS]);
 
     // --- PLAYER SYNC ---
     useEffect(() => {
@@ -110,8 +82,11 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
 
         const playerFrame = player.getCurrentFrame();
         const targetFrame = Math.round(currentTime * FPS);
+        // Sync tolerance
         const threshold = isPlaying ? 5 : 0.5;
-        if (Math.abs(playerFrame - targetFrame) > threshold) player.seekTo(targetFrame);
+        if (Math.abs(playerFrame - targetFrame) > threshold) {
+            player.seekTo(targetFrame);
+        }
     }, [currentTime, FPS, isPlaying]);
 
     useEffect(() => {
@@ -138,12 +113,12 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
         return `${m}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     };
 
-    const hasContent = previewState.clips.length > 0 || previewState.audioClips.length > 0;
+    // FIXED: Check content presence using the new 'visuals' property
+    const hasContent = previewState.visuals.length > 0;
 
     // --- RENDER ---
     return (
         <div className={`relative w-full h-full bg-black overflow-hidden group select-none ${isExpanded ? 'rounded-none' : 'rounded-lg'}`}>
-            <audio ref={audioRef} className="hidden" />
 
             {/* Content Layer */}
             <div className="absolute inset-0 flex items-center justify-center bg-[#050505]">
@@ -239,7 +214,7 @@ export const PreviewMonitor: React.FC<PreviewMonitorProps> = ({
                                         className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95"
                                         title="Split Clip (S)"
                                     >
-                                        <Scissors size={16} />
+                                        Scissors size={16}
                                     </button>
                                 )}
 

@@ -1,9 +1,8 @@
-// src/components/timeline/TimelineContainer.tsx
-
-import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { TimelineTrack } from './TimelineTrack';
 import { TimelineRuler } from './TimelineRuler';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 
 interface LibraryAsset {
     name: string;
@@ -23,7 +22,6 @@ interface TimelineContainerProps {
     items: TimelineItemType[];
     duration: number;
     currentTime: number;
-    pixelsPerSecond: number; // Lifted state
     onSeek: (time: number) => void;
     onItemMove: (itemId: string, newTrackId: string, newStartTime: number) => void;
     onItemTrim: (trackId: string, itemId: string, newStartTime: number, newDuration: number, trimStart: boolean) => void;
@@ -34,6 +32,7 @@ interface TimelineContainerProps {
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
+    onDeleteClip?: (trackId: string, itemId: string) => void;
 }
 
 export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineContainerProps>(({
@@ -41,7 +40,6 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
     items,
     duration,
     currentTime,
-    pixelsPerSecond,
     onSeek,
     onItemMove,
     onItemTrim,
@@ -51,10 +49,16 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
     onAssetDrop,
     activeTool = 'cursor',
     onSplit,
-    onToggleMute
+    onToggleMute,
+    onDeleteClip
 }, ref) => {
 
+    // --- Layout Constants ---
     const SIDEBAR_WIDTH = 240;
+    const MIN_ZOOM = 2;
+    const MAX_ZOOM = 600;
+
+    const [pixelsPerSecond, setPixelsPerSecond] = useState(50);
     const [isPanning, setIsPanning] = useState(false);
 
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -64,8 +68,7 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
 
     useEffect(() => { ppsRef.current = pixelsPerSecond; }, [pixelsPerSecond]);
 
-    // Calculate width ensuring playhead can reach end + padding
-    const totalContentWidth = Math.max((duration + 5) * pixelsPerSecond + SIDEBAR_WIDTH, 1000);
+    const totalContentWidth = Math.max(duration + 10, 60) * pixelsPerSecond + SIDEBAR_WIDTH + 500;
 
     useImperativeHandle(ref, () => ({
         setPlayheadTime: (time: number) => {
@@ -83,7 +86,6 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
         }
     }));
 
-    // Sync playhead on zoom change or initial load
     useEffect(() => {
         if (playheadRef.current) {
             const x = (currentTime * pixelsPerSecond) + SIDEBAR_WIDTH;
@@ -91,8 +93,20 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
         }
     }, [pixelsPerSecond, currentTime]);
 
+    // Zooming
+    const handleWheel = (e: React.WheelEvent) => {
+        if (e.ctrlKey) {
+            e.preventDefault();
+            const direction = e.deltaY > 0 ? -1 : 1;
+            const multiplier = pixelsPerSecond > 100 ? 50 : (pixelsPerSecond > 20 ? 10 : 2);
+            setPixelsPerSecond(prev => {
+                const next = prev + (direction * multiplier);
+                return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+            });
+        }
+    };
 
-    // Interaction: Scrubbing on Ruler
+    // Scrubber
     const handleScrubberMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -107,22 +121,19 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
         };
 
         updateTime(e.clientX);
-
         const handleMouseMove = (moveEvent: MouseEvent) => {
             moveEvent.preventDefault();
             updateTime(moveEvent.clientX);
         };
-
         const handleMouseUp = () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
     };
 
-    // Interaction: Panning Timeline
+    // Panning
     const handleTrackAreaMouseDown = (e: React.PointerEvent) => {
         if (activeTool === 'split' || e.button !== 0) return;
         if ((e.target as HTMLElement).closest('.timeline-item')) return;
@@ -165,16 +176,32 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
     }, [getAssetData]);
 
     return (
-        <div className="flex flex-col h-full bg-[#121212] select-none text-xs overflow-hidden">
-            {/* Scrollable Area */}
+        <div className="flex flex-col h-full bg-[#121212] select-none text-xs" onWheel={handleWheel}>
+            <div className="h-10 bg-[#1a1a1a] border-b border-zinc-800 flex items-center justify-between px-4 shrink-0 z-40 shadow-sm">
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Timeline</span>
+                    <span className="text-[10px] text-zinc-600 bg-black px-2 py-0.5 rounded font-mono">
+                        {Math.round(pixelsPerSecond)}% Zoom
+                    </span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <ZoomOut size={14} className="text-zinc-500" />
+                    <input
+                        type="range"
+                        min={MIN_ZOOM} max={MAX_ZOOM}
+                        value={pixelsPerSecond}
+                        onChange={(e) => setPixelsPerSecond(Number(e.target.value))}
+                        className="w-24 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-zinc-400"
+                    />
+                    <ZoomIn size={14} className="text-zinc-500" />
+                </div>
+            </div>
+
             <div
                 ref={scrollContainerRef}
                 className={`flex-1 overflow-auto relative custom-scrollbar ${isPanning ? 'cursor-grabbing' : 'cursor-default'}`}
             >
-                {/* Content Wrapper */}
                 <div className="relative" style={{ width: totalContentWidth, minHeight: '100%' }}>
-
-                    {/* A. Sticky Ruler */}
                     <div
                         className="sticky top-0 left-0 z-30 h-8 bg-[#1a1a1a]/95 backdrop-blur-sm border-b border-white/5 group cursor-col-resize"
                         onMouseDown={handleScrubberMouseDown}
@@ -184,16 +211,13 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
                             pixelsPerSecond={pixelsPerSecond}
                             duration={duration}
                         />
-                        {/* Hover Highlight */}
                         <div className="absolute inset-0 bg-white/0 group-hover:bg-white/5 transition-colors pointer-events-none" />
                     </div>
 
-                    {/* B. Tracks */}
                     <div
                         className="relative z-10 pt-2 pb-32"
                         onPointerDown={handleTrackAreaMouseDown}
                     >
-                        {/* Background Grid */}
                         <div className="absolute inset-0 pointer-events-none z-0" style={{
                             backgroundImage: `linear-gradient(to right, #333 1px, transparent 1px)`,
                             backgroundSize: `${pixelsPerSecond}px 100%`,
@@ -217,26 +241,22 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
                                 activeTool={activeTool}
                                 onSplit={onSplit}
                                 onToggleMute={onToggleMute}
+                                onDeleteClip={onDeleteClip}
                             />
                         ))}
                     </div>
 
-                    {/* C. Playhead */}
                     <div
                         ref={playheadRef}
                         className="absolute top-0 bottom-0 z-50 pointer-events-none will-change-transform"
                         style={{ left: 0, width: '0px' }}
                     >
-                        {/* Playhead Handle */}
                         <div className="absolute -top-0 -left-[6px] w-[13px] h-[18px] bg-yellow-500 rounded-b-sm shadow-md flex items-center justify-center z-50">
                             <div className="w-0.5 h-2 bg-black/20 rounded-full"></div>
                         </div>
-                        {/* Connector */}
                         <div className="absolute top-[18px] -left-[6px] w-0 h-0 border-l-[6.5px] border-l-transparent border-r-[6.5px] border-r-transparent border-t-[8px] border-t-yellow-500"></div>
-                        {/* Line */}
                         <div className="absolute top-[26px] left-0 w-px bottom-0 bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.4)]"></div>
                     </div>
-
                 </div>
             </div>
         </div>

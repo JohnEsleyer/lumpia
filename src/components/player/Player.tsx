@@ -2,7 +2,8 @@ import React, { useRef } from 'react';
 import { Play } from 'lucide-react';
 import { PreviewMonitor } from '../inspector/PreviewMonitor';
 
-import type { PreviewState } from '../../hooks/usePreviewLogic';
+// CHANGED: Import from useTimelinePreview instead of usePreviewLogic
+import type { PreviewState } from '../../hooks/useTimelinePreview';
 
 interface PlayerProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;

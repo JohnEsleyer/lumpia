@@ -1,47 +1,50 @@
-// src/remotion/PreviewComposition.tsx
 import React from 'react';
-import { AbsoluteFill, Sequence, OffthreadVideo, Img, Audio } from 'remotion';
-import type { PreviewClip } from '../hooks/usePreviewLogic';
+import { AbsoluteFill, Sequence, Html5Video, Img, Audio } from 'remotion';
+import type { PreviewVisual, AudioSource } from '../hooks/useTimelinePreview';
 
 export interface PreviewCompositionProps {
-    clips: PreviewClip[];
-    audioClips: PreviewClip[];
+    visuals: PreviewVisual[];
+    audioSources: AudioSource[]; // Used ONLY during export/render
     fps: number;
+    isRendering?: boolean; // Flag to enable audio for export
 }
 
 export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
-    clips,
-    audioClips,
-    fps
+    visuals,
+    audioSources,
+    fps,
+    isRendering = false
 }) => {
     return (
         <AbsoluteFill style={{ backgroundColor: '#000' }}>
-            {/* Video / Image Layers */}
-            {clips.map((clip) => {
-                const durationInFrames = Math.max(1, Math.ceil(clip.timelineDuration * fps));
-                const startFrame = Math.round(clip.timelineStart * fps);
 
-                // Common style
-                const style = { width: '100%', height: '100%', objectFit: 'contain' as const };
+            {/* 1. VISUALS (Video & Images) */}
+            {visuals.map((clip) => {
+                const durationInFrames = Math.max(1, Math.ceil(clip.timelineDuration * fps));
+                const fromFrame = Math.round(clip.timelineStart * fps);
+                const startFromFrame = Math.round(clip.sourceStartOffset * fps);
 
                 return (
                     <Sequence
-                        key={`clip-${clip.id}`}
-                        from={startFrame}
+                        key={`vis-${clip.id}`}
+                        from={fromFrame}
                         durationInFrames={durationInFrames}
+                        style={{ zIndex: clip.zIndex }}
                     >
                         {clip.mediaType === 'image' ? (
                             <Img
                                 src={clip.url}
-                                style={style}
+                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                             />
                         ) : (
-                            <OffthreadVideo
+                            <Html5Video
                                 src={clip.url}
-                                trimBefore={Math.round((clip.start || 0) * fps)}
+                                startFrom={startFromFrame}
                                 playbackRate={clip.playbackRate}
-                                volume={clip.volume ?? 1.0}
-                                style={style}
+                                // ALWAYS Mute during preview (AudioEngine handles it). 
+                                // Unmute ONLY during render if it's a video track we want sound from.
+                                muted={!isRendering}
+                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                                 crossOrigin="anonymous"
                             />
                         )}
@@ -49,22 +52,25 @@ export const PreviewComposition: React.FC<PreviewCompositionProps> = ({
                 );
             })}
 
-            {/* Audio Layers */}
-            {audioClips.map((clip) => {
-                const durationInFrames = Math.max(1, Math.ceil(clip.timelineDuration * fps));
-                const startFrame = Math.round(clip.timelineStart * fps);
+            {/* 2. AUDIO (Render Only) */}
+            {isRendering && audioSources.map((clip) => {
+                if (clip.isMuted) return null;
+
+                const durationInFrames = Math.max(1, Math.ceil((clip.timelineEnd - clip.timelineStart) * fps));
+                const fromFrame = Math.round(clip.timelineStart * fps);
+                const startFromFrame = Math.round(clip.sourceStartOffset * fps);
 
                 return (
                     <Sequence
-                        key={`audio-${clip.id}`}
-                        from={startFrame}
+                        key={`aud-${clip.id}`}
+                        from={fromFrame}
                         durationInFrames={durationInFrames}
                     >
                         <Audio
                             src={clip.url}
-                            startFrom={Math.round((clip.start || 0) * fps)}
-                            volume={clip.volume ?? 1.0}
-                            playbackRate={clip.playbackRate ?? 1.0}
+                            startFrom={startFromFrame}
+                            volume={clip.volume}
+                            playbackRate={clip.playbackRate}
                         />
                     </Sequence>
                 );

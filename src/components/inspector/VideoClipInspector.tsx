@@ -4,19 +4,13 @@ import { Video, Settings2, Volume2, Gauge, Scissors, Loader2, Play, Pause } from
 import { VideoTrimmer } from './VideoTrimmer';
 import { Button } from '../ui/Button';
 
-interface LibraryAsset {
-    name: string;
-    url: string;
-    filmstrip: string[];
-    thumbnailUrl: string;
-    duration?: number;
-}
-
 // Snapshot of the committed/saved state of the clip for reference
 interface CommittedClipData {
     start: number; // Committed Timeline Start (T_committed_start)
     startOffset: number; // Committed Source Start (S_committed)
     playbackRate: number;
+    // Added for type compatibility in inspector logic
+    currentCommittedSourceEnd: number;
 }
 
 interface VideoClipInspectorProps {
@@ -28,11 +22,19 @@ interface VideoClipInspectorProps {
         playbackRate: number;
         volume: number;
     };
-    assetData: LibraryAsset;
-    committedItemData: CommittedClipData; // <-- NEW PROP
+    assetData: {
+        name: string;
+        url: string;
+        filmstrip: string[];
+        thumbnailUrl: string;
+        duration?: number;
+    };
+    // Corrected type definition for CommittedItemData to reflect actual use
+    committedItemData: CommittedClipData;
 
     // Actions
-    onUpdateItemProperties: (id: string, data: { volume?: number; playbackRate?: number | null }) => void;
+    // FIXED TYPE: Removed `| null` from playbackRate to align with TimelineItem definition
+    onUpdateItemProperties: (id: string, data: { volume?: number; playbackRate?: number }) => void;
     // Commits trim: updates timeline start, timeline duration, and source offset
     onUpdateTimelinePosition: (id: string, newStart: number, newDuration: number, newStartOffset: number) => void;
     onSeek: (time: number) => void;
@@ -144,6 +146,9 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
         onClearTrimOverride,
         sourceDuration
     ]);
+
+
+
 
     // --- EFFECT 2: Source Playback Synchronization ---
     const sourceTime = useMemo(() => {
@@ -359,6 +364,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         onUpdateItemProperties(itemId, { playbackRate: parseFloat(e.target.value) });
     };
+
     // Format time helper
     const formatTime = (s: number) => {
         const m = Math.floor(s / 60);

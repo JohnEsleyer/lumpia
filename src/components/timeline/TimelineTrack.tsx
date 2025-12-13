@@ -1,7 +1,7 @@
 import React from 'react';
 import { TimelineItem } from './TimelineItem';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
-import { Video, Mic, Layers, Volume2, Lock, Eye, EyeOff } from 'lucide-react';
+import { Video, Mic, Layers, Volume2, VolumeX, Eye, Lock } from 'lucide-react';
 
 interface LibraryAsset {
     name: string;
@@ -25,6 +25,7 @@ interface TimelineTrackProps {
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
+    onDeleteClip?: (trackId: string, itemId: string) => void;
 }
 
 export const TimelineTrack: React.FC<TimelineTrackProps> = ({
@@ -40,10 +41,10 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
     onAssetDrop,
     activeTool = 'cursor',
     onSplit,
-    onToggleMute
+    onToggleMute,
+    onDeleteClip
 }) => {
     const trackHeight = 80;
-    // Must match SIDEBAR_WIDTH in TimelineContainer
     const sidebarWidth = '240px';
 
     const getIcon = () => {
@@ -61,6 +62,8 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
+        if (track.isMuted) return; // Disable drop on muted tracks
+
         try {
             const dataString = e.dataTransfer.getData('application/json');
             const data = JSON.parse(dataString);
@@ -87,16 +90,16 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
                     <div className="flex items-center gap-1">
                         <button
-                            className={`p-1.5 rounded transition-colors ${track.isMuted ? 'bg-red-500/10 text-red-500' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                            className={`p-1.5 rounded transition-colors ${track.isMuted ? 'bg-red-500/20 text-red-500' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
                             onClick={() => onToggleMute?.(track.id)}
-                            title={track.isMuted ? "Unmute" : "Mute"}
+                            title={track.isMuted ? "Unmute Track" : "Mute Track"}
                         >
-                            <Volume2 size={12} />
+                            {track.isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
                         </button>
-                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5">
+                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-not-allowed opacity-50">
                             <Lock size={12} />
                         </button>
-                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5">
+                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-not-allowed opacity-50">
                             <Eye size={12} />
                         </button>
                     </div>
@@ -105,7 +108,9 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
             {/* Track Content */}
             <div
-                className={`flex-1 relative bg-[#111]/50 border-y border-white/5 group-hover:bg-[#111] transition-colors`}
+                className={`flex-1 relative border-y border-white/5 transition-colors duration-200
+                    ${track.isMuted ? 'bg-[#0f0f0f] bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,#1a1a1a_10px,#1a1a1a_20px)]' : 'bg-[#111]/50 group-hover:bg-[#111]'}
+                `}
                 style={{ height: trackHeight }}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -128,8 +133,12 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
                             variant={track.type}
                             assetUrl={assetUrl}
                             filmstrip={assetData?.filmstrip}
+                            sourceDuration={assetData?.duration}
                             activeTool={activeTool || 'cursor'}
                             onSplit={onSplit}
+                            // New Props
+                            isTrackMuted={track.isMuted}
+                            onDelete={() => onDeleteClip?.(track.id, item.id)}
                         />
                     );
                 })}
