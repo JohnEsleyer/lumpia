@@ -1,7 +1,7 @@
 import React from 'react';
 import { TimelineItem } from './TimelineItem';
 import { type TimelineTrack as TimelineTrackType, type TimelineItem as TimelineItemType } from '../../types';
-import { Video, Mic, Layers, Volume2 } from 'lucide-react';
+import { Video, Mic, Layers, Volume2, Lock, Eye, EyeOff } from 'lucide-react';
 
 interface LibraryAsset {
     name: string;
@@ -20,13 +20,8 @@ interface TimelineTrackProps {
     selectedItemId: string | null;
     onItemClick: (itemId: string) => void;
     getAssetName: (resourceId: string) => string;
-
-    // P2.1: Replaced getAssetUrl with getAssetData
     getAssetData: (resourceId: string) => LibraryAsset | undefined;
-
-    // P1.1: New prop for asset drop handling
     onAssetDrop: (trackId: string, payload: LibraryAsset) => void;
-
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
@@ -41,26 +36,26 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
     selectedItemId,
     onItemClick,
     getAssetName,
-    getAssetData, // P2.1
-    onAssetDrop, // P1.1
+    getAssetData,
+    onAssetDrop,
     activeTool = 'cursor',
     onSplit,
     onToggleMute
 }) => {
     const trackHeight = 80;
+    // Must match SIDEBAR_WIDTH in TimelineContainer
+    const sidebarWidth = '240px';
 
     const getIcon = () => {
         switch (track.type) {
-            case 'video': return <Video size={16} />;
-            case 'audio': return <Mic size={16} />;
-            case 'overlay': return <Layers size={16} />;
+            case 'video': return <Video size={14} className="text-blue-400" />;
+            case 'audio': return <Mic size={14} className="text-emerald-400" />;
+            case 'overlay': return <Layers size={14} className="text-purple-400" />;
         }
     };
 
-    // P1.1: Drop handlers for the entire track area
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
-        // Set drop effect visually
         e.dataTransfer.dropEffect = 'copy';
     };
 
@@ -69,9 +64,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
         try {
             const dataString = e.dataTransfer.getData('application/json');
             const data = JSON.parse(dataString);
-
             if (data.type.startsWith('asset')) {
-                // The payload contains the full LibraryAsset object
                 onAssetDrop(track.id, data.payload);
             }
         } catch (error) {
@@ -79,49 +72,54 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
         }
     };
 
-
     return (
-        <div className={`flex w-full border-b border-white/5`}>
-            {/* Track Header */}
-            <div className="w-[200px] shrink-0 border-r border-white/5 bg-[#111] p-2 flex flex-col justify-between z-20 sticky left-0">
-                <div className="flex items-center gap-2 text-slate-300">
-                    {getIcon()}
-                    <span className="text-xs font-bold truncate">{track.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        className={`p-1 rounded ${track.isMuted ? 'text-red-500 hover:text-red-400' : 'text-slate-500 hover:text-white'}`}
-                        onClick={() => onToggleMute?.(track.id)}
-                    >
-                        {track.isMuted ? <Volume2 className="line-through opacity-50" size={12} /> : <Volume2 size={12} />}
-                    </button>
-                    {/* Add more track controls here */}
+        <div className={`flex w-full mb-1 group`}>
+            {/* Track Header (Sticky Left) */}
+            <div
+                className="shrink-0 border-r border-white/5 bg-[#1a1a1a] flex flex-col z-20 sticky left-0 shadow-[2px_0_10px_rgba(0,0,0,0.2)]"
+                style={{ width: sidebarWidth, height: trackHeight }}
+            >
+                <div className="flex-1 p-3 flex flex-col justify-between">
+                    <div className="flex items-center gap-2 text-slate-300">
+                        {getIcon()}
+                        <span className="text-xs font-bold truncate text-slate-200">{track.name}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                        <button
+                            className={`p-1.5 rounded transition-colors ${track.isMuted ? 'bg-red-500/10 text-red-500' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                            onClick={() => onToggleMute?.(track.id)}
+                            title={track.isMuted ? "Unmute" : "Mute"}
+                        >
+                            <Volume2 size={12} />
+                        </button>
+                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5">
+                            <Lock size={12} />
+                        </button>
+                        <button className="p-1.5 rounded text-slate-500 hover:text-slate-300 hover:bg-white/5">
+                            <Eye size={12} />
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Track Content */}
             <div
-                className={`flex-1 relative bg-[#0a0a0a]`}
+                className={`flex-1 relative bg-[#111]/50 border-y border-white/5 group-hover:bg-[#111] transition-colors`}
                 style={{ height: trackHeight }}
-                onDragOver={handleDragOver} // P1.1
-                onDrop={handleDrop} // P1.1
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
             >
-                {/* Grid Lines (could be moved to container for efficiency) */}
-                <div className="absolute inset-0 pointer-events-none" style={{
-                    backgroundImage: 'linear-gradient(to right, #222 1px, transparent 1px)',
-                    backgroundSize: `${pixelsPerSecond}px 100%`
-                }} />
-
                 {items.map(item => {
-                    const assetData = getAssetData(item.resourceId); // P2.3 Get full asset data
-                    const assetUrl = assetData ? `http://localhost:3001${assetData.url}` : ''; // Reconstruct URL if needed
+                    const assetData = getAssetData(item.resourceId);
+                    const assetUrl = assetData ? `http://localhost:3001${assetData.url}` : '';
 
                     return (
                         <TimelineItem
                             key={item.id}
                             item={item}
                             pixelsPerSecond={pixelsPerSecond}
-                            height={48}
+                            height={trackHeight - 4} // Padding
                             onDrag={(_id, newTime) => onItemMove(item.id, track.id, newTime)}
                             onTrim={(_id, newTime, newDur, trimStart) => onItemTrim(item.id, newTime, newDur, trimStart)}
                             onClick={() => onItemClick(item.id)}
@@ -129,7 +127,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
                             name={getAssetName(item.resourceId)}
                             variant={track.type}
                             assetUrl={assetUrl}
-                            filmstrip={assetData?.filmstrip} // P2.3 Pass filmstrip data
+                            filmstrip={assetData?.filmstrip}
                             activeTool={activeTool || 'cursor'}
                             onSplit={onSplit}
                         />

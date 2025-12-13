@@ -23,7 +23,7 @@ import { AudioInspector } from '../components/inspector/AudioInspector';
 import { ImageInspector } from '../components/inspector/ImageInspector';
 
 // Timeline Components
-import { TimelineContainer } from '../components/timeline/TimelineContainer';
+import { TimelineContainer, type TimelineContainerHandle } from '../components/timeline/TimelineContainer'; // Import Handle type
 import { useTimelineLogic } from '../hooks/useTimelineLogic';
 import { useTimelinePreview } from '../hooks/useTimelinePreview';
 import { AddAssetModal } from '../components/modals/AddAssetModal';
@@ -54,7 +54,7 @@ const formatTime = (s: number) => {
 const isAudioFile = (filename: string) => /\.(mp3|wav|aac|m4a|flac|ogg)$/i.test(filename);
 const isImageFile = (filename: string) => /\.(jpg|jpeg|png|webp|gif)$/i.test(filename);
 
-// --- Library Panel (Local Definition for now, can be extracted) ---
+// --- Library Panel ---
 const LibraryPanel = ({
   assets,
   onOpenUploadModal,
@@ -66,7 +66,6 @@ const LibraryPanel = ({
   onDragStart: (e: React.DragEvent, type: string, payload: any) => void,
   onTrimAudio: (asset: LibraryAsset) => void
 }) => {
-
   return (
     <div className="flex flex-col h-full bg-zinc-925">
       <div className="h-14 border-b border-zinc-900 flex items-center px-4 bg-zinc-950/30">
@@ -77,7 +76,6 @@ const LibraryPanel = ({
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
         <div className="space-y-4">
-          {/* Upload Zone */}
           <div
             onClick={onOpenUploadModal}
             className="mb-6 p-4 border border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 hover:border-indigo-500/50 transition-all cursor-pointer group flex flex-col items-center justify-center gap-3 text-center"
@@ -96,12 +94,11 @@ const LibraryPanel = ({
             <span className="text-[10px] text-zinc-600 font-mono">({assets.length})</span>
           </div>
 
-          {/* Grid Layout for Assets */}
           <div className="grid grid-cols-2 gap-3">
             {assets.map(asset => {
               const isAudio = isAudioFile(asset.name);
               const isImage = isImageFile(asset.name);
-              const dragType = isAudio ? 'asset-audio' : (isImage ? 'asset-image' : 'asset-video'); // Standardized drag type
+              const dragType = isAudio ? 'asset-audio' : (isImage ? 'asset-image' : 'asset-video');
 
               return (
                 <div
@@ -138,21 +135,12 @@ aspect-video w-full rounded-md overflow-hidden shrink-0 relative border flex ite
                     ) : (
                       <Clapperboard size={20} className="opacity-50 text-zinc-600" />
                     )}
-                    {
-                      !isImage && (
-                        <div className="absolute bottom-1 right-1 bg-black/80 px-1.5 py-0.5 rounded text-[9px] font-mono text-white font-bold backdrop-blur-sm shadow-sm border border-white/10">
-                          {asset.duration ? formatTime(asset.duration) : '0:00'}
-                        </div>
-                      )
-                    }
                   </div>
                   <div className="min-w-0">
                     <div className="text-[10px] font-bold truncate mb-0.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" title={asset.name}>
                       {asset.name}
                     </div>
                   </div>
-
-                  {/* Trim Button for Audio */}
                   {isAudio && (
                     <button
                       onClick={(e) => {
@@ -185,25 +173,21 @@ function EditorApp() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [trimOverride, setTrimOverride] = useState<{ id: string, startOffset: number, endOffset: number } | null>(null);
 
-
-  // UI State
   const [isLibraryVisible, setIsLibraryVisible] = useState(true);
   const [isUtilityVisible, setIsUtilityVisible] = useState(true);
   const [activeTool, setActiveTool] = useState<'cursor' | 'split'>('cursor');
 
-  // Video State
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Audio Trimmer State
+  // CRITICAL: Reference to the Timeline Container for high-performance updates
+  const timelineContainerRef = useRef<TimelineContainerHandle>(null);
+
   const [trimmerAsset, setTrimmerAsset] = useState<LibraryAsset | null>(null);
   const [isTrimmerOpen, setIsTrimmerOpen] = useState(false);
 
-  // Timeline Logic
   const timeline = useTimelineLogic(project);
-
-  // Preview Logic
-  const previewState = useTimelinePreview(timeline.tracks, libraryAssets, selectedItemId, trimOverride); // Pass trimOverride
+  const previewState = useTimelinePreview(timeline.tracks, libraryAssets, selectedItemId, trimOverride);
 
   useEffect(() => {
     if (projectId) {
@@ -215,7 +199,6 @@ function EditorApp() {
       }).catch(console.error);
     }
   }, [projectId]);
-
 
   const onDragStart = (e: React.DragEvent, type: string, payload: any) => {
     e.dataTransfer.setData('application/json', JSON.stringify({ type, payload }));
@@ -240,16 +223,38 @@ function EditorApp() {
     }
   };
 
+  // --- SYNC ENGINE ---
+
+  // 1. When Player Updates Time (High Frequency)
+  // This is passed to the Player component
+  const handlePlayerTimeUpdate = useCallback((time: number) => {
+    // A. Imperatively update the red line on the timeline (Zero React Renders)
+    timelineContainerRef.current?.setPlayheadTime(time);
+
+    // B. Optionally update React state for other UI (like property panels)
+    // We throttle this or allow it depending on performance needs. 
+    // For now, we update it to keep the rest of the UI (inspectors) in sync.
+    timeline.setCurrentTime(time);
+  }, [timeline]);
+
+  // 2. When Timeline Seeks (User Click/Drag)
   const handleSeek = (time: number) => {
-    // Clamped time uses the derived timeline duration (which can change dynamically)
     const clampedTime = Math.max(0, Math.min(time, previewState.totalDuration));
+
+    // Update React State
     timeline.setCurrentTime(clampedTime);
+
+    // Update Video/Player Position
     if (videoRef.current) {
+      // If playing, we might want to pause or just jump
+      // Setting currentTime on videoRef usually jumps.
       videoRef.current.currentTime = clampedTime;
     }
+
+    // Update Visual Playhead immediately
+    timelineContainerRef.current?.setPlayheadTime(clampedTime);
   };
 
-  // Handler for generic property updates (volume, speed, image duration)
   const handleUpdateItemProperties = (id: string, data: any) => {
     const track = timeline.tracks.find(t => t.items.some(i => i.id === id));
     if (track) {
@@ -257,7 +262,6 @@ function EditorApp() {
     }
   };
 
-  // Handler specifically for when the VideoTrimmer commits a trim
   const handleUpdateClipTimelineAndTrim = (
     itemId: string,
     newStart: number,
@@ -266,13 +270,11 @@ function EditorApp() {
   ) => {
     const track = timeline.tracks.find(t => t.items.some(i => i.id === itemId));
     if (track) {
-      // Merge new properties (including timeline position/duration/offset).
       timeline.updateClip(track.id, itemId, {
         start: newStart,
         duration: newDuration,
         startOffset: newStartOffset
       });
-      // CRITICAL: Clear override state once committed
       setTrimOverride(null);
     }
   };
@@ -282,28 +284,24 @@ function EditorApp() {
       const track = timeline.tracks.find(t => t.items.some(i => i.id === selectedItemId));
       if (track) {
         timeline.splitClip(track.id, selectedItemId, timeline.currentTime);
+        setActiveTool('cursor');
       }
     }
   };
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Delete selected item
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItemId) {
-        // Find which track has this item
         const track = timeline.tracks.find(t => t.items.some(i => i.id === selectedItemId));
         if (track) {
           timeline.deleteClip(track.id, selectedItemId);
-          setSelectedItemId(null); // Deselect
+          setSelectedItemId(null);
         }
       }
-
       if (e.key.toLowerCase() === 's' && selectedItemId) {
         handleSplit();
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedItemId, timeline]);
@@ -312,18 +310,16 @@ function EditorApp() {
     const track = timeline.tracks.find(t => t.items.some(i => i.id === itemId));
     if (track) {
       timeline.splitClip(track.id, itemId, time);
+      setActiveTool('cursor');
     }
   };
 
-  // Function to retrieve full asset data
   const getAssetData = useCallback((resourceId: string): LibraryAsset | undefined => {
     return libraryAssets.find(a => a.name === resourceId);
   }, [libraryAssets]);
 
-  // Handler for asset dropping onto tracks
   const handleAssetDrop = useCallback((trackId: string, payload: LibraryAsset) => {
     const trackType = timeline.tracks.find(t => t.id === trackId)?.type;
-
     let expectedType = 'video';
     if (isAudioFile(payload.name)) expectedType = 'audio';
     else if (isImageFile(payload.name)) expectedType = 'overlay';
@@ -332,30 +328,21 @@ function EditorApp() {
       console.warn(`Cannot drop ${payload.name} (Type: ${expectedType}) onto ${trackType} track.`);
       return;
     }
-
     timeline.addClip(trackId, payload, timeline.currentTime);
-
   }, [timeline.tracks, timeline.currentTime, timeline.addClip]);
 
-
-  // Derived state for the inspector
   const selectedTrackedItem = useMemo(() => {
     if (!selectedItemId) return null;
     for (const track of timeline.tracks) {
       const item = track.items.find(i => i.id === selectedItemId);
       if (item) {
         const asset = getAssetData(item.resourceId);
-        return {
-          item,
-          track,
-          asset,
-        };
+        return { item, track, asset };
       }
     }
     return null;
   }, [selectedItemId, timeline.tracks, getAssetData]);
 
-  // NEW: Memoized snapshot of the committed item data for stable trimming calculations
   const committedItemData = useMemo(() => {
     if (!selectedTrackedItem) return null;
     const { item } = selectedTrackedItem;
@@ -366,11 +353,8 @@ function EditorApp() {
     };
   }, [selectedTrackedItem]);
 
-
-  // Conditional Inspector Rendering
   const renderInspector = useMemo(() => {
     if (!selectedTrackedItem || !committedItemData) {
-      // Show generic tools if nothing is selected
       return (
         <UtilityPanel
           selectedItemId={null}
@@ -383,19 +367,14 @@ function EditorApp() {
     }
 
     const { item, track, asset } = selectedTrackedItem;
-
-    // Fallback if asset is missing (shouldn't happen, but safety)
     if (!asset) return <UtilityPanel selectedItemId={null} properties={null} onUpdate={handleUpdateItemProperties} activeTool={activeTool} onToolChange={setActiveTool} />;
 
-
-    // Common item data structure for inspectors
     const itemData = {
       start: item.start,
       duration: item.duration,
       startOffset: item.startOffset,
       playbackRate: item.playbackRate ?? 1,
       volume: item.volume ?? 1,
-      // Used by image/audio inspectors:
       url: `http://localhost:3001${asset.url}`,
       sourceDuration: asset.duration,
       label: asset.name
@@ -407,12 +386,11 @@ function EditorApp() {
           itemId={item.id}
           itemData={itemData}
           assetData={asset}
-          committedItemData={committedItemData} // <-- PASSED NEW SNAPSHOT
+          committedItemData={committedItemData}
           onUpdateItemProperties={handleUpdateItemProperties}
           onUpdateTimelinePosition={handleUpdateClipTimelineAndTrim}
           onSeek={handleSeek}
           globalTimelineTime={timeline.currentTime}
-          // NEW TRIM OVERRIDE HANDLERS
           onUpdateTrimOverride={(startOffset, endOffset) => {
             setTrimOverride({ id: item.id, startOffset, endOffset });
           }}
@@ -425,10 +403,7 @@ function EditorApp() {
 
     if (track.type === 'audio') {
       if (!projectId) return null;
-
-      // Calculate the audio clip end offset for the AudioInspector display
       const endOffset = item.startOffset + item.duration * (item.playbackRate || 1);
-
       return (
         <AudioInspector
           projectId={projectId}
@@ -441,28 +416,24 @@ function EditorApp() {
             volume: itemData.volume,
             label: itemData.label
           }}
-          // Note: AudioInspector's onUpdateNode handles its own complex state (offset/duration/volume)
-          // When we unify, we pass the generic handler which uses timeline.updateClip
           onUpdateNode={handleUpdateItemProperties}
         />
       );
     }
 
     if (track.type === 'overlay') {
-      // Assuming this is primarily for images/static overlays
       return (
         <ImageInspector
           nodeId={item.id}
           data={{
             url: itemData.url,
-            duration: itemData.duration // Image node uses timeline duration as its property
+            duration: itemData.duration
           }}
           onUpdateNode={handleUpdateItemProperties}
         />
       );
     }
 
-    // Default to UtilityPanel if type is unhandled or generic properties are needed
     return (
       <UtilityPanel
         selectedItemId={item.id}
@@ -472,9 +443,7 @@ function EditorApp() {
         onToolChange={setActiveTool}
       />
     );
-
   }, [selectedItemId, timeline.tracks, getAssetData, activeTool, handleUpdateItemProperties, handleUpdateClipTimelineAndTrim, handleSeek, projectId, timeline.currentTime, committedItemData]);
-
 
   if (!projectId) return <div>Invalid Project ID</div>;
 
@@ -504,16 +473,23 @@ function EditorApp() {
             currentTime={timeline.currentTime}
             onPlayPause={() => setIsPlaying(!isPlaying)}
             onSeek={handleSeek}
-            onTimeUpdate={timeline.setCurrentTime}
+            // CRITICAL: We pass the optimized handler here
+            onTimeUpdate={handlePlayerTimeUpdate}
             projectDimensions={project ? { width: project.width, height: project.height } : undefined}
           />
         }
         timeline={
           <div className="h-full flex flex-col">
-            {/* Floating Action Bar */}
             <div className="absolute top-[-3rem] right-4 flex gap-2 z-50">
-              <Button onClick={handleSplit} disabled={!selectedItemId} className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700 disabled:opacity-50">
-                <Scissors size={14} className="mr-2" /> Split
+              <Button
+                onClick={() => setActiveTool(activeTool === 'split' ? 'cursor' : 'split')}
+                className={`h-8 text-xs disabled:opacity-50 ${activeTool === 'split'
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-900/20'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                  }`}
+                disabled={!selectedItemId}
+              >
+                <Scissors size={14} className="mr-2" /> {activeTool === 'split' ? 'Splitting...' : 'Split Tool'}
               </Button>
               <Button onClick={handleSave} isLoading={isSaving} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-900/20 text-white border-0">
                 <Save size={14} className="mr-2" /> Save Project
@@ -521,6 +497,7 @@ function EditorApp() {
             </div>
 
             <TimelineContainer
+              ref={timelineContainerRef} // Attached Ref
               tracks={timeline.tracks}
               duration={timeline.duration}
               currentTime={timeline.currentTime}
