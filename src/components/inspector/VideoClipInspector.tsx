@@ -61,7 +61,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     const sourceDuration = assetData.duration || 60;
     const inspectorVideoRef = useRef<HTMLVideoElement>(null);
     const [previewIsLoading, setPreviewIsLoading] = useState(true);
-    
+
     // CORRECTED Ref type for stability check
     const lastCommittedRef = useRef<{ id: string, start: number, offset: number, duration: number, rate: number, url: string } | null>(null);
 
@@ -96,14 +96,14 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
         };
 
         const lastCommitted = lastCommittedRef.current;
-        
+
         let shouldReset = false;
 
         // Condition 1: New clip selected (ID change)
         if (!lastCommitted || lastCommitted.id !== currentCommitted.id) {
             shouldReset = true;
             // console.log('[VCI Debug] RESET TRIGGERED: New Item Selected.');
-        } 
+        }
         // Condition 2: Committed properties changed externally (e.g., timeline trim/move committed)
         else if (
             lastCommitted.start !== currentCommitted.start ||
@@ -114,37 +114,37 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
         ) {
             shouldReset = true;
             // console.log('[VCI Debug] RESET TRIGGERED: Committed Properties Changed Externally.');
-        } 
+        }
 
         if (shouldReset) {
             const committedEnd = Math.min(
                 sourceDuration,
                 itemData.startOffset + (itemData.duration * itemData.playbackRate)
             );
-            
+
             setTempStartOffset(itemData.startOffset);
             setTempEndOffset(committedEnd);
-            
+
             // CRITICAL: Force set trimming to false and stop playback
-            setIsTrimming(false); 
+            setIsTrimming(false);
             setIsPlayingSource(false); // Stop local playback
             onClearTrimOverride();
             setPreviewIsLoading(true);
-            
+
             lastCommittedRef.current = currentCommitted; // Update reference only after reset
         }
 
     }, [
-        itemId, 
-        itemData.start, 
-        itemData.startOffset, 
-        itemData.duration, 
-        itemData.playbackRate, 
-        assetData.url, 
-        onClearTrimOverride, 
+        itemId,
+        itemData.start,
+        itemData.startOffset,
+        itemData.duration,
+        itemData.playbackRate,
+        assetData.url,
+        onClearTrimOverride,
         sourceDuration
     ]);
-    
+
     // --- EFFECT 2: Source Playback Synchronization ---
     const sourceTime = useMemo(() => {
         const timelineStart = itemData.start;
@@ -161,7 +161,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
             const timeInClip = globalTimelineTime - timelineStart;
             const sourceDelta = timeInClip * playbackRate;
             const calculatedSourceTime = activeStart + sourceDelta;
-            
+
             // Clamp to the current active source trim range
             return Math.max(
                 activeStart,
@@ -188,15 +188,19 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
         if (isPlayingSource) {
             // Ensure video element is playing
             if (video.paused) video.play().catch(console.warn);
+            // Apply clip volume when playing
+            video.volume = itemData.volume ?? 1.0;
         } else {
             // Ensure video element is paused
             if (!video.paused) video.pause();
+            // Mute when paused/inactive to avoid sound interference when scrubbing
+            video.volume = 0;
         }
 
         // 2. Time Synchronization (Only seek if not playing locally, or if playing but outside bounds)
         if (!isPlayingSource) {
             if (!isNaN(sourceTime) && sourceTime >= 0) {
-                 // Sync video element frame only if playhead is over the clip
+                // Sync video element frame only if playhead is over the clip
                 if (globalTimelineTime >= itemData.start && globalTimelineTime < clipEnd) {
                     // Seek only if time delta is significant
                     if (Math.abs(video.currentTime - sourceTime) > 0.05) {
@@ -208,7 +212,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
                 }
             }
         }
-        
+
         // 3. Playback Boundary/Looping Listener (for local playback)
         const checkBoundary = () => {
             if (video.currentTime >= activeEndOffset) {
@@ -224,16 +228,17 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
         };
 
     }, [
-        isPlayingSource, 
-        isTrimming, 
-        globalTimelineTime, 
-        sourceTime, 
-        itemData.start, 
-        itemData.duration, 
-        itemData.startOffset, 
-        currentCommittedSourceEnd, 
-        tempEndOffset, 
-        tempStartOffset
+        isPlayingSource,
+        isTrimming,
+        globalTimelineTime,
+        sourceTime,
+        itemData.start,
+        itemData.duration,
+        itemData.startOffset,
+        currentCommittedSourceEnd,
+        tempEndOffset,
+        tempStartOffset,
+        itemData.volume // Added volume dependency for dynamic updates
     ]);
 
 
@@ -264,7 +269,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
             onSeek(itemData.start);
         }
     }, [isTrimming, handleTrimmerCancel, itemData.startOffset, currentCommittedSourceEnd, onUpdateTrimOverride, onSeek, itemData.start]);
-    
+
     // 3. Play/Pause Source Control
     const toggleSourcePlayback = useCallback(() => {
         const video = inspectorVideoRef.current;
@@ -280,7 +285,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
             if (video.currentTime >= activeEndOffset || video.currentTime < activeStartOffset) {
                 video.currentTime = activeStartOffset;
             }
-            
+
             setIsPlayingSource(true);
         }
     }, [isPlayingSource, isTrimming, tempStartOffset, tempEndOffset, itemData.startOffset, currentCommittedSourceEnd]);
@@ -312,7 +317,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     const handleSeekSource = useCallback((sourceTime: number) => {
         // Stop playback when seeking manually
         setIsPlayingSource(false);
-        
+
         const activeStart = isTrimming ? tempStartOffset : itemData.startOffset;
         const sourceDelta = sourceTime - activeStart;
         const timeInClip = sourceDelta / (itemData.playbackRate || 1);
@@ -325,7 +330,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
     // 6. Commit Handler (writes GHOST state to timeline)
     const handleTrimmerCommit = useCallback((newStartOffset: number, newEndOffset: number) => {
         setIsPlayingSource(false); // Stop playback on commit
-        
+
         const newSourceSpan = newEndOffset - newStartOffset;
         const newTimelineDuration = newSourceSpan / itemData.playbackRate;
 
@@ -388,7 +393,6 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
                             className={`w-full h-full object-contain ${previewIsLoading ? 'opacity-0' : 'opacity-100'}`}
                             controls={false}
                             autoPlay={false}
-                            muted
                             onLoadedMetadata={() => setPreviewIsLoading(false)}
                             crossOrigin="anonymous"
                         />
@@ -399,7 +403,7 @@ export const VideoClipInspector: React.FC<VideoClipInspectorProps> = ({
                                 <Loader2 className="animate-spin text-yellow-500" size={24} />
                             </div>
                         )}
-                        
+
                         {/* 3. Play/Pause Overlay Button */}
                         <button
                             onClick={toggleSourcePlayback}
