@@ -44,7 +44,7 @@ export const useTimelinePreview = (
 
         // 1. Process Visuals
         visualTracks.forEach((track, zIndex) => {
-            if (track.type === 'audio') return; // Skip audio tracks for visuals
+            if (track.type === 'audio') return;
 
             track.items.forEach((item) => {
                 const asset = assets.find(a => a.name === item.resourceId);
@@ -53,7 +53,7 @@ export const useTimelinePreview = (
                 let { startOffset, duration, start: timelineStart } = item;
                 const playbackRate = item.playbackRate || 1;
 
-                // Apply Live Trim Override
+                // Apply Live Trim Override (Unchanged)
                 if (trimOverride && item.id === activeItemId && item.id === trimOverride.id) {
                     startOffset = trimOverride.startOffset;
                     const sourceDuration = trimOverride.endOffset - startOffset;
@@ -75,9 +75,9 @@ export const useTimelinePreview = (
             });
         });
 
-        // 2. Process Audio (Includes Audio Tracks AND Video Tracks)
+        // 2. Process Audio (Unchanged)
         tracks.forEach((track) => {
-            if (track.type === 'overlay') return; // Overlays (images) usually don't have audio
+            if (track.type === 'overlay') return;
 
             track.items.forEach((item) => {
                 const asset = assets.find(a => a.name === item.resourceId);
@@ -108,10 +108,11 @@ export const useTimelinePreview = (
             });
         });
 
+        // Calculate max duration based strictly on content end, no padding.
         const maxDuration = Math.max(
             ...visuals.map(v => v.timelineStart + v.timelineDuration),
             ...audioSources.map(a => a.timelineEnd),
-            30
+            1 // Minimum duration for playback engine sanity
         );
 
         return {

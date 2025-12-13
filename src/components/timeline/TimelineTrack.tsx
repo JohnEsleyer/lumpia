@@ -21,7 +21,7 @@ interface TimelineTrackProps {
     onItemClick: (itemId: string) => void;
     getAssetName: (resourceId: string) => string;
     getAssetData: (resourceId: string) => LibraryAsset | undefined;
-    onAssetDrop: (trackId: string, payload: LibraryAsset) => void;
+    onAssetDrop: (trackId: string, payload: LibraryAsset, dropTime: number) => void; // MODIFIED
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
@@ -45,7 +45,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
     onDeleteClip
 }) => {
     const trackHeight = 80;
-    const sidebarWidth = '240px';
+    // const sidebarWidth = '240px'; // Defined in TimelineContainer, not needed here
 
     const getIcon = () => {
         switch (track.type) {
@@ -62,13 +62,31 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
-        if (track.isMuted) return; // Disable drop on muted tracks
+        if (track.isMuted) return;
 
         try {
             const dataString = e.dataTransfer.getData('application/json');
             const data = JSON.parse(dataString);
+
             if (data.type.startsWith('asset')) {
-                onAssetDrop(track.id, data.payload);
+                const rect = e.currentTarget.getBoundingClientRect();
+
+                // Find the parent scroll container (the div with overflow-auto)
+                const scrollContainer = e.currentTarget.parentElement?.parentElement;
+                const scrollLeft = scrollContainer?.scrollLeft || 0;
+
+                // Calculate X position relative to the start of the track content (0s mark)
+                // rect.left: screen position of the track content element (right of sidebar)
+                // e.clientX: current mouse position
+                const dropXRelativeToTrackContent = e.clientX - rect.left;
+
+                // Total pixel position from the timeline start (0s)
+                const totalDropPixel = dropXRelativeToTrackContent + scrollLeft;
+
+                // Convert pixels to time
+                const dropTime = Math.max(0, totalDropPixel / pixelsPerSecond);
+
+                onAssetDrop(track.id, data.payload, dropTime);
             }
         } catch (error) {
             console.error("Invalid drop payload", error);
@@ -77,11 +95,12 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
     return (
         <div className={`flex w-full mb-1 group`}>
-            {/* Track Header (Sticky Left) */}
+            {/* Track Header (Sticky Left) - Unchanged */}
             <div
                 className="shrink-0 border-r border-white/5 bg-[#1a1a1a] flex flex-col z-20 sticky left-0 shadow-[2px_0_10px_rgba(0,0,0,0.2)]"
-                style={{ width: sidebarWidth, height: trackHeight }}
+                style={{ width: '240px', height: trackHeight }}
             >
+                {/* ... (Track Header Content) ... */}
                 <div className="flex-1 p-3 flex flex-col justify-between">
                     <div className="flex items-center gap-2 text-slate-300">
                         {getIcon()}
@@ -136,7 +155,6 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
                             sourceDuration={assetData?.duration}
                             activeTool={activeTool || 'cursor'}
                             onSplit={onSplit}
-                            // New Props
                             isTrackMuted={track.isMuted}
                             onDelete={() => onDeleteClip?.(track.id, item.id)}
                         />

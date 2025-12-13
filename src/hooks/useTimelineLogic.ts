@@ -5,14 +5,14 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
     const [tracks, setTracks] = useState<TimelineTrack[]>([]);
     const [currentTime, setCurrentTime] = useState(0);
 
-    // Dynamic duration with padding
+    // Duration calculation: Stop exactly at the last frame, no padding.
     const duration = useMemo(() => {
-        if (tracks.length === 0) return 60;
         const maxItemEnd = tracks.flatMap(t => t.items).reduce((max, item) => Math.max(max, item.start + item.duration), 0);
-        return Math.max(maxItemEnd + 10, 30);
+        // Keep a minimum of 30 seconds for an empty timeline area visualization
+        return Math.max(maxItemEnd, 30); 
     }, [tracks]);
 
-    // --- SNAPPING ENGINE ---
+    // --- SNAPPING ENGINE (Unchanged) ---
     const getSnapTime = useCallback((time: number, excludedItemId: string | null = null, threshold = 0.2) => {
         let closestTime = time;
         let minDist = threshold;
@@ -63,29 +63,80 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
         }
     }, []);
 
+    /**
+     * Adds a clip, enforcing no overlaps by pushing subsequent clips (Ripple Insert).
+     */
     const addClip = useCallback((trackId: string, asset: any, startTime: number, options?: { startOffset?: number, duration?: number }) => {
         setTracks(prev => prev.map(track => {
             if (track.id === trackId) {
-                const itemDuration = options?.duration ?? (asset.duration || 5);
                 const isImage = track.type === 'overlay' && !/\.(mp3|wav|aac|m4a|flac|ogg)$/i.test(asset.name);
+                const itemDuration = options?.duration ?? (isImage ? 5 : (asset.duration || 5));
+                const insertionPoint = Math.max(0, startTime);
 
+                // 1. Create a new dummy item with the requested insertion time
                 const newItem: TimelineItem = {
                     id: crypto.randomUUID(),
                     resourceId: asset.name,
                     trackId: trackId,
-                    start: startTime,
-                    duration: isImage ? 5 : itemDuration,
+                    start: insertionPoint,
+                    duration: itemDuration,
                     startOffset: options?.startOffset ?? 0,
                     volume: 1,
                     playbackRate: 1
                 };
-                return { ...track, items: [...track.items, newItem] };
+
+                // 2. Combine all items (including the new one) and sort by requested start time
+                const allItems = [...track.items, newItem].sort((a, b) => a.start - b.start);
+
+                // 3. Compact/Ripple the entire track
+                let lastEnd = 0;
+                const finalItems = allItems.map(item => {
+                    // Ensure the clip starts no earlier than the end of the previous clip (ripple)
+                    const requiredStart = Math.max(lastEnd, item.start);
+                    const finalItem = { ...item, start: requiredStart };
+                    lastEnd = requiredStart + item.duration;
+                    return finalItem;
+                });
+
+                return { ...track, items: finalItems };
             }
             return track;
         }));
     }, []);
 
-    // --- STANDARD DELETE ---
+    /**
+     * Moves a clip, enforcing no overlaps by rippling subsequent clips.
+     */
+    const moveClip = useCallback((trackId: string, itemId: string, newStart: number) => {
+        setTracks(prev => prev.map(track => {
+            if (track.id !== trackId) return track;
+
+            const originalItem = track.items.find(i => i.id === itemId);
+            if (!originalItem) return track;
+
+            // 1. Create the moved item version at the new requested start time
+            const movedItem = { ...originalItem, start: Math.max(0, newStart) };
+
+            // 2. Remove original and insert moved version
+            const nonMovingItems = track.items.filter(i => i.id !== itemId);
+            const allItems = [...nonMovingItems, movedItem].sort((a, b) => a.start - b.start);
+
+            // 3. Compact/Ripple the entire track
+            let lastEnd = 0;
+            const finalItems = allItems.map(item => {
+                // If the item starts earlier than the calculated previous clip end (`lastEnd`), push it.
+                const requiredStart = Math.max(lastEnd, item.start);
+                
+                const finalItem = { ...item, start: requiredStart };
+                lastEnd = requiredStart + item.duration;
+                return finalItem;
+            });
+
+            return { ...track, items: finalItems };
+        }));
+    }, []);
+
+    // --- STANDARD DELETE (Leaves a gap) ---
     const deleteClip = useCallback((trackId: string, itemId: string) => {
         setTracks(prev => prev.map(track => {
             if (track.id === trackId) {
@@ -95,7 +146,7 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
         }));
     }, []);
 
-    // --- RIPPLE DELETE ---
+    // --- RIPPLE DELETE (Closes the gap) ---
     const rippleDeleteClip = useCallback((trackId: string, itemId: string) => {
         setTracks(prev => prev.map(track => {
             if (track.id === trackId) {
@@ -121,20 +172,7 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
         }));
     }, []);
 
-    const moveClip = useCallback((trackId: string, itemId: string, newStart: number) => {
-        // Simple move logic, snapping is handled by the caller (UI) via getSnapTime
-        setTracks(prev => prev.map(track => {
-            if (track.id !== trackId) return track;
-            const items = track.items.map(i => {
-                if (i.id === itemId) return { ...i, start: Math.max(0, newStart) };
-                return i;
-            });
-            return { ...track, items };
-        }));
-    }, []);
-
-    // --- SLIP EDITING ---
-    // Changes startOffset while keeping start/duration on timeline fixed
+    // --- Other operations (trimClip, splitClip, updateClip, slipClip, toggleTrackMute) remain as they were ---
     const slipClip = useCallback((trackId: string, itemId: string, delta: number, sourceDuration: number) => {
         setTracks(prev => prev.map(track => {
             if (track.id !== trackId) return track;
@@ -144,10 +182,7 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                 items: track.items.map(item => {
                     if (item.id === itemId) {
                         const rate = item.playbackRate || 1;
-                        // Calculate new offset
                         let newStartOffset = item.startOffset - (delta * rate);
-
-                        // Bounds checking
                         newStartOffset = Math.max(0, newStartOffset);
 
                         const currentDurationInSource = item.duration * rate;
@@ -163,7 +198,6 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
         }));
     }, []);
 
-    // --- ADVANCED TRIM (Standard, Ripple, Roll) ---
     const trimClip = useCallback((
         trackId: string,
         itemId: string,
@@ -198,7 +232,6 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                         }
 
                         // Shift subsequent items
-                        // If we extended duration (positive diff), shift right. If shrunk, shift left.
                         if (item.start > originalItem.start) {
                             return { ...item, start: item.start + timeDiff };
                         }
@@ -232,7 +265,7 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
             };
         }));
     }, []);
-
+    
     const splitClip = useCallback((trackId: string, itemId: string, splitTime: number) => {
         setTracks(prev => prev.map(track => {
             if (track.id === trackId) {
@@ -252,7 +285,8 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
                     startOffset: itemToSplit.startOffset + firstHalfDuration * (itemToSplit.playbackRate || 1)
                 };
 
-                return { ...track, items: track.items.map(i => i.id === itemId ? firstItem : i).concat(secondItem) };
+                const remainingItems = track.items.filter(i => i.id !== itemId);
+                return { ...track, items: [...remainingItems, firstItem, secondItem].sort((a, b) => a.start - b.start) };
             }
             return track;
         }));
@@ -286,9 +320,9 @@ export const useTimelineLogic = (_initialProject: Project | null) => {
         splitClip,
         updateClip,
         deleteClip,
-        rippleDeleteClip, // New
-        slipClip,         // New
+        rippleDeleteClip, 
+        slipClip,         
         toggleTrackMute,
-        getSnapTime       // New
+        getSnapTime       
     };
 };

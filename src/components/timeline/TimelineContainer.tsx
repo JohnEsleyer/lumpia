@@ -28,7 +28,7 @@ interface TimelineContainerProps {
     selectedItemId: string | null;
     onItemClick: (itemId: string | null) => void;
     getAssetData: (resourceId: string) => LibraryAsset | undefined;
-    onAssetDrop: (trackId: string, payload: LibraryAsset) => void;
+    onAssetDrop: (trackId: string, payload: LibraryAsset, dropTime: number) => void; // MODIFIED: Added dropTime
     activeTool?: 'cursor' | 'split';
     onSplit?: (id: string, time: number) => void;
     onToggleMute?: (trackId: string) => void;
@@ -237,7 +237,7 @@ export const TimelineContainer = forwardRef<TimelineContainerHandle, TimelineCon
                                 onItemClick={onItemClick}
                                 getAssetName={getAssetName}
                                 getAssetData={getAssetData}
-                                onAssetDrop={onAssetDrop}
+                                onAssetDrop={onAssetDrop} // MODIFIED: Passes the full handler
                                 activeTool={activeTool}
                                 onSplit={onSplit}
                                 onToggleMute={onToggleMute}

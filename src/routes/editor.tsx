@@ -134,7 +134,12 @@ function EditorApp() {
   }, [projectId]);
 
   const onDragStart = (e: React.DragEvent, type: string, payload: ProjectAsset) => {
-    e.dataTransfer.setData('application/json', JSON.stringify({ type, payload }));
+    // Add mediaType heuristic for better handling in logic
+    const mediaType = isAudioFile(payload.name) ? 'audio' : (isImageFile(payload.name) ? 'image' : 'video');
+    const assetPayload = { ...payload, mediaType };
+
+    // Update payload dataTransfer to include mediaType
+    e.dataTransfer.setData('application/json', JSON.stringify({ type, payload: assetPayload }));
   };
 
   const handleSeek = useCallback((time: number) => {
@@ -148,9 +153,11 @@ function EditorApp() {
     timeline.setCurrentTime(time);
   }, [timeline]);
 
-  const handleAssetDrop = useCallback((trackId: string, payload: ProjectAsset) => {
-    timeline.addClip(trackId, payload, timeline.currentTime);
+  const handleAssetDrop = useCallback((trackId: string, payload: ProjectAsset, dropTime: number) => {
+    // The dropTime argument is the exact timeline position (in seconds) where the user dropped the asset.
+    timeline.addClip(trackId, payload, dropTime);
   }, [timeline]);
+
 
   // --- EXPORT LOGIC ---
   const handleExport = async () => {
@@ -225,6 +232,7 @@ function EditorApp() {
         playbackRate={1}
       />
 
+
       <EditorLayout
         isLibraryVisible={isLibraryVisible}
         setIsLibraryVisible={setIsLibraryVisible}
@@ -240,7 +248,7 @@ function EditorApp() {
         }
         player={
           <div className="relative w-full h-full flex flex-col">
-            {/* Header Toolbar (Unchanged) */}
+            {/* Header Toolbar */}
             <div className="absolute top-4 right-4 z-50 flex gap-2">
               <Button onClick={handleSave} className="h-8 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-600">
                 <Save size={14} className="mr-2" /> Save
@@ -250,6 +258,7 @@ function EditorApp() {
               </Button>
             </div>
 
+            {/* TimelineAudioEngine is mounted here for scope access */}
             <TimelineAudioEngine
               audioSources={previewState.audioSources}
               currentTime={timeline.currentTime}
@@ -259,8 +268,6 @@ function EditorApp() {
 
             <Player
               videoRef={videoRef}
-              // FIXED: Pass the resolved PreviewState directly. 
-              // Player and PreviewMonitor now use the same type from useTimelinePreview.
               previewState={previewState}
               isPlaying={isPlaying}
               currentTime={timeline.currentTime}
@@ -279,12 +286,13 @@ function EditorApp() {
             duration={timeline.duration}
             currentTime={timeline.currentTime}
             onSeek={handleSeek}
+            // Clips now use ripple move, handled internally by useTimelineLogic
             onItemMove={(id, track, start) => timeline.moveClip(track, id, start)}
             onItemTrim={timeline.trimClip}
             selectedItemId={selectedItemId}
             onItemClick={setSelectedItemId}
             getAssetData={(id) => libraryAssets.find(a => a.name === id)}
-            onAssetDrop={handleAssetDrop}
+            onAssetDrop={handleAssetDrop} // Updated handler now receives dropTime
             activeTool={activeTool}
             onToggleMute={timeline.toggleTrackMute}
             onDeleteClip={(tid, iid) => timeline.deleteClip(tid, iid)}
